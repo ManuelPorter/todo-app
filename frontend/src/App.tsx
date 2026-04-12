@@ -123,6 +123,10 @@ export default function App() {
   const [sort, setSort] = useState('createdAt')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [editDue, setEditDue] = useState('')
 
   useEffect(() => { if (auth) load() }, [page, query, sort, auth])
 
@@ -137,8 +141,8 @@ export default function App() {
     }
   }
 
-  async function load() {
-    setLoading(true)
+  async function load(silent = false) {
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       params.set('page', String(page))
@@ -174,7 +178,7 @@ export default function App() {
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
       setTitle(''); setDesc(''); setDue('')
       setError(null)
-      load()
+      load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create todo')
     }
@@ -202,7 +206,37 @@ export default function App() {
       handleUnauthorized(putRes.status)
       if (!putRes.ok) throw new Error(`Failed to update todo (${putRes.status})`)
       setError(null)
-      load()
+      load(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update todo')
+    }
+  }
+
+  function startEdit(t: Todo) {
+    setEditingId(t.id)
+    setEditTitle(t.title)
+    setEditDesc(t.description ?? '')
+    setEditDue(t.dueAt ? t.dueAt.slice(0, 16) : '')
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+  }
+
+  async function saveEdit(id: number) {
+    const payload: any = { title: editTitle, description: editDesc, completed: todos.find(t => t.id === id)?.completed ?? false }
+    if (editDue) payload.dueAt = editDue
+    try {
+      const res = await fetch('/api/todos/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(payload),
+      })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to update todo (${res.status})`)
+      setEditingId(null)
+      setError(null)
+      load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update todo')
     }
@@ -214,7 +248,7 @@ export default function App() {
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to delete todo (${res.status})`)
       setError(null)
-      load()
+      load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete todo')
     }
@@ -270,15 +304,46 @@ export default function App() {
       <div className="space-y-3">
         {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
         {!loading && todos.map(t => (
-          <div key={t.id} className={`p-3 bg-white rounded shadow flex items-start gap-3 ${t.completed ? 'opacity-75' : ''}`}>
-            <input type="checkbox" checked={t.completed} onChange={e => toggle(t.id, e.target.checked)} />
-            <div className="flex-1">
-              <div className="font-semibold">
-                {t.title} {t.dueAt ? <span className="text-sm text-gray-500">due {formatDueAt(t.dueAt)}</span> : null}
+          <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
+            {editingId === t.id ? (
+              <div className="flex flex-col gap-2">
+                <input
+                  className="p-2 border rounded text-sm"
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  placeholder="Title"
+                  autoFocus
+                />
+                <input
+                  className="p-2 border rounded text-sm"
+                  value={editDesc}
+                  onChange={e => setEditDesc(e.target.value)}
+                  placeholder="Description"
+                />
+                <input
+                  type="datetime-local"
+                  className="p-2 border rounded text-sm"
+                  value={editDue}
+                  onChange={e => setEditDue(e.target.value)}
+                />
+                <div className="flex gap-2 justify-end">
+                  <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
+                  <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">{t.description}</div>
-            </div>
-            <button onClick={() => remove(t.id)} className="text-red-600">Delete</button>
+            ) : (
+              <div className="flex items-start gap-3">
+                <input type="checkbox" checked={t.completed} onChange={e => toggle(t.id, e.target.checked)} />
+                <div className="flex-1">
+                  <div className="font-semibold">
+                    {t.title} {t.dueAt ? <span className="text-sm text-gray-500">due {formatDueAt(t.dueAt)}</span> : null}
+                  </div>
+                  <div className="text-sm text-gray-600">{t.description}</div>
+                </div>
+                <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
+                <button onClick={() => remove(t.id)} className="text-red-600 text-sm">Delete</button>
+              </div>
+            )}
           </div>
         ))}
         {!loading && todos.length === 0 && !error && (
