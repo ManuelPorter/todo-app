@@ -4,6 +4,19 @@ let todos = [];
 let filter = 'all';
 
 function qs(sel){ return document.querySelector(sel); }
+function formatDueAt(s){
+  if(!s) return '';
+  const d = new Date(s);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString();
+}
+function toDateTimeLocalValue(s){
+  if(!s) return '';
+  const d = new Date(s);
+  if(Number.isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function setSummary(){
   const total = todos.length;
@@ -32,6 +45,7 @@ function render(){
           <div style="flex:1">
             <div class="title" data-id="${t.id}">${escapeHtml(t.title)}</div>
             <div class="desc">${escapeHtml(t.description||'')}</div>
+            ${t.dueAt ? `<div class="desc">Due: ${escapeHtml(formatDueAt(t.dueAt))}</div>` : ''}
           </div>
         </div>
       </div>
@@ -50,12 +64,17 @@ function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'
 
 async function load(){
   const res = await fetch(api);
-  todos = await res.json();
+  const data = await res.json();
+  todos = Array.isArray(data) ? data : (Array.isArray(data?.content) ? data.content : []);
   render();
 }
 
-async function create(title, description){
-  const res = await fetch(api, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title, description})});
+async function create(title, description, dueAt){
+  const res = await fetch(api, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({title, description, dueAt: dueAt || null})
+  });
   const created = await res.json();
   todos.push(created);
   render();
@@ -81,12 +100,13 @@ async function toggle(id, checked){
   if(!res.ok){ Object.assign(todo,old); render(); alert('Update failed'); }
 }
 
-async function saveEdit(id, title, description){
+async function saveEdit(id, title, description, dueAt){
   const todo = todos.find(t=>t.id==id);
   if(!todo) return;
   const old = {...todo};
   todo.title = title;
   todo.description = description;
+  todo.dueAt = dueAt || null;
   render();
   const res = await fetch(api + '/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(todo)});
   if(!res.ok){ Object.assign(todo,old); render(); alert('Save failed'); }
@@ -104,6 +124,7 @@ document.addEventListener('click', async e=>{
     meta.innerHTML = `
       <input class="edit-input" id="edit-title-${tid}" value="${escapeHtml(todo.title)}" />
       <input class="edit-input" id="edit-desc-${tid}" value="${escapeHtml(todo.description||'')}" />
+      <input class="edit-input" id="edit-due-at-${tid}" type="datetime-local" value="${toDateTimeLocalValue(todo.dueAt)}" />
       <div style="margin-top:8px;display:flex;gap:8px">
         <button class="save" data-id="${tid}">Save</button>
         <button class="cancel" data-id="${tid}">Cancel</button>
@@ -115,8 +136,9 @@ document.addEventListener('click', async e=>{
     const tid = e.target.dataset.id;
     const title = qs(`#edit-title-${tid}`).value.trim();
     const desc = qs(`#edit-desc-${tid}`).value.trim();
+    const dueAt = qs(`#edit-due-at-${tid}`).value;
     if(!title) { alert('Title required'); return; }
-    await saveEdit(tid, title, desc);
+    await saveEdit(tid, title, desc, dueAt);
   }
 
   if(e.target.classList.contains('cancel')){ load(); }
@@ -133,10 +155,12 @@ document.getElementById('form').addEventListener('submit', async e=>{
   e.preventDefault();
   const title = qs('#title').value.trim();
   const desc = qs('#desc').value.trim();
+  const dueAt = qs('#due-at').value;
   if(!title) return;
-  await create(title, desc);
+  await create(title, desc, dueAt);
   qs('#title').value = '';
   qs('#desc').value = '';
+  qs('#due-at').value = '';
 });
 
 document.querySelector('.filters').addEventListener('click', e=>{
