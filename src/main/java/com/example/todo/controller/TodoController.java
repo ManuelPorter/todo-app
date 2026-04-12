@@ -3,6 +3,7 @@ package com.example.todo.controller;
 import com.example.todo.model.Todo;
 import com.example.todo.repository.TodoRepository;
 import com.example.todo.repository.UserRepository;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -71,7 +72,7 @@ public class TodoController {
     }
 
     @PostMapping
-    public Todo create(@RequestBody Todo todo,
+    public Todo create(@Valid @RequestBody Todo todo,
                        @AuthenticationPrincipal UserDetails principal) {
         todo.setId(null);
         todo.setUserId(resolveUserId(principal));
@@ -80,7 +81,7 @@ public class TodoController {
 
     @PutMapping("/{id}")
     public ResponseEntity<Todo> update(@PathVariable Long id,
-                                       @RequestBody Todo input,
+                                       @Valid @RequestBody Todo input,
                                        @AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
         Optional<Todo> found = repo.findById(id);

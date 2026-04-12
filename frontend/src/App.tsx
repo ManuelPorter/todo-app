@@ -224,6 +224,7 @@ export default function App() {
   }
 
   async function saveEdit(id: number) {
+    if (!editTitle.trim()) return
     const payload: any = { title: editTitle, description: editDesc, completed: todos.find(t => t.id === id)?.completed ?? false }
     if (editDue) payload.dueAt = editDue
     try {
