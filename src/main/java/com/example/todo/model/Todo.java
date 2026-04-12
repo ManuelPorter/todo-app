@@ -18,6 +18,7 @@ public class Todo {
 
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
+    private Long userId;
 
     @PrePersist
     protected void onCreate() {
@@ -42,4 +43,7 @@ public class Todo {
 
     public LocalDateTime getDueAt() { return dueAt; }
     public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 }
