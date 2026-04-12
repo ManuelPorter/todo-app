@@ -17,6 +17,7 @@ public class Todo {
     private boolean completed = false;
 
     private LocalDateTime createdAt;
+    private LocalDateTime dueAt;
 
     @PrePersist
     protected void onCreate() {
@@ -38,4 +39,7 @@ public class Todo {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getDueAt() { return dueAt; }
+    public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
 }
