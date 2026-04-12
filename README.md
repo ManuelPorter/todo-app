@@ -1,6 +1,8 @@
 # todo-app
 todo app 0.1
-# Todo App (Spring Boot + H2 + simple JS frontend)
+# Todo App (Spring Boot + H2 + React 18 + TypeScript + Vite + Tailwind CSS)
+
+# Prod server: Express.js with API proxy middleware
 
 This repository contains a minimal Todo application built with Spring Boot (Java), JPA (H2 in-memory database), and a lightweight static JavaScript frontend served from `src/main/resources/static/index.html`.
 
@@ -24,11 +26,7 @@ API endpoints:
 
 H2 console is available at http://localhost:8080/h2-console (JDBC URL: `jdbc:h2:mem:todos`)
 
-Next steps you might want:
-
-- Switch to Postgres/MySQL (update `application.properties` and add driver)
-- Add authentication
-- Add frontend framework (React/Vue)
+Postgres/MySQL
 
 Frontend (React + TypeScript + Tailwind)
 -------------------------------------
