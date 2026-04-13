@@ -123,6 +123,7 @@ export default function App() {
   const [sort, setSort] = useState('createdAt')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
@@ -192,6 +193,8 @@ export default function App() {
   }
 
   async function toggle(id: number, checked: boolean) {
+    if (pendingIds.has(id)) return
+    setPendingIds(prev => new Set(prev).add(id))
     try {
       const res = await fetch('/api/todos/' + id, { headers: authHeaders() })
       handleUnauthorized(res.status)
@@ -209,6 +212,8 @@ export default function App() {
       load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update todo')
+    } finally {
+      setPendingIds(prev => { const s = new Set(prev); s.delete(id); return s })
     }
   }
 
@@ -244,6 +249,8 @@ export default function App() {
   }
 
   async function remove(id: number) {
+    if (pendingIds.has(id)) return
+    setPendingIds(prev => new Set(prev).add(id))
     try {
       const res = await fetch('/api/todos/' + id, { method: 'DELETE', headers: authHeaders() })
       handleUnauthorized(res.status)
@@ -252,6 +259,8 @@ export default function App() {
       load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete todo')
+    } finally {
+      setPendingIds(prev => { const s = new Set(prev); s.delete(id); return s })
     }
   }
 
@@ -334,7 +343,7 @@ export default function App() {
               </div>
             ) : (
               <div className="flex items-start gap-3">
-                <input type="checkbox" checked={t.completed} onChange={e => toggle(t.id, e.target.checked)} />
+                <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
                 <div className="flex-1">
                   <div className="font-semibold">
                     {t.title} {t.dueAt ? <span className="text-sm text-gray-500">due {formatDueAt(t.dueAt)}</span> : null}
@@ -342,7 +351,7 @@ export default function App() {
                   <div className="text-sm text-gray-600">{t.description}</div>
                 </div>
                 <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
-                <button onClick={() => remove(t.id)} className="text-red-600 text-sm">Delete</button>
+                <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Delete</button>
               </div>
             )}
           </div>
