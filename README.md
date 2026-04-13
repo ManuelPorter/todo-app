@@ -29,7 +29,9 @@ H2 console is available at http://localhost:8080/h2-console (JDBC URL: `jdbc:h2:
 Postgres/MySQL
 
 Frontend (React + TypeScript + Tailwind)
+
 -------------------------------------
+
 I've added a separate frontend under `frontend/` built with Vite + React + TypeScript and Tailwind CSS. It also includes a small Express server to serve built static files and proxy `/api` requests to the Spring Boot backend.
 
 How to run the frontend locally:
@@ -52,3 +54,33 @@ How to run the frontend locally:
 
 	Express will serve the built assets on http://localhost:3000 and proxy `/api` to the backend.
 
+
+-----------------------------
+
+# Tests
+
+1. Backend
+
+Run all tests
+"mvn test"
+
+Run a single test class
+"mvn test -Dtest=JwtUtilTest"
+"mvn test -Dtest=AuthControllerTest"
+"mvn test -Dtest=TodoControllerTest"
+
+Run a single test method
+"mvn test -Dtest=TodoControllerTest#deleteTodo_existingId_returnsNoContent"
+
+2. Frontend
+
+from /frontend/
+
+Run once and exit
+"npm test"          
+
+re-runs on file changes (good during development)
+"npm run test:watch"
+
+run once + generate coverage report
+"npm run test:coverage" 
