@@ -19,6 +19,10 @@ public class Todo {
 
     private boolean completed = false;
 
+    @Enumerated(EnumType.STRING)
+    @Column(columnDefinition = "VARCHAR(255) DEFAULT 'MEDIUM'")
+    private Priority priority = Priority.MEDIUM;
+
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
     @JsonIgnore
@@ -27,6 +31,12 @@ public class Todo {
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+        if (priority == null) priority = Priority.MEDIUM;
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        if (priority == null) priority = Priority.MEDIUM;
     }
 
     // getters / setters
@@ -47,6 +57,9 @@ public class Todo {
 
     public LocalDateTime getDueAt() { return dueAt; }
     public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
+
+    public Priority getPriority() { return priority; }
+    public void setPriority(Priority priority) { this.priority = priority; }
 
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }

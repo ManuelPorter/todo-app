@@ -93,6 +93,7 @@ public class TodoController {
         existing.setDescription(input.getDescription());
         existing.setCompleted(input.isCompleted());
         existing.setDueAt(input.getDueAt());
+        existing.setPriority(input.getPriority() != null ? input.getPriority() : existing.getPriority());
         return ResponseEntity.ok(repo.save(existing));
     }
 
