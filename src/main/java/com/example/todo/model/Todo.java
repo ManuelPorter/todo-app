@@ -1,5 +1,6 @@
 package com.example.todo.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
@@ -20,6 +21,7 @@ public class Todo {
 
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
+    @JsonIgnore
     private Long userId;
 
     @PrePersist
