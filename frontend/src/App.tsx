@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react'
 
+type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
+
 type Todo = {
   id: number
   title: string
   description?: string
   completed: boolean
   dueAt?: string
+  priority: Priority
 }
 
 type AuthState = {
@@ -116,6 +119,7 @@ export default function App() {
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [due, setDue] = useState('')
+  const [priority, setPriority] = useState<Priority>('MEDIUM')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const [size] = useState(6)
@@ -128,6 +132,7 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [editDue, setEditDue] = useState('')
+  const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
 
   useEffect(() => { if (auth) load() }, [page, query, sort, auth])
 
@@ -167,7 +172,7 @@ export default function App() {
   async function create(e: React.FormEvent) {
     e.preventDefault()
     if (!title) return
-    const payload: any = { title, description: desc }
+    const payload: any = { title, description: desc, priority }
     if (due) payload.dueAt = due
     try {
       const res = await fetch('/api/todos', {
@@ -177,12 +182,19 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
-      setTitle(''); setDesc(''); setDue('')
+      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM')
       setError(null)
       load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create todo')
     }
+  }
+
+  const priorityBadge: Record<Priority, { label: string; className: string }> = {
+    LOW:    { label: 'Low',    className: 'bg-gray-100 text-gray-600' },
+    MEDIUM: { label: 'Medium', className: 'bg-blue-100 text-blue-700' },
+    HIGH:   { label: 'High',   className: 'bg-orange-100 text-orange-700' },
+    URGENT: { label: 'Urgent', className: 'bg-red-100 text-red-700 font-semibold' },
   }
 
   function formatDueAt(dueAt?: string) {
@@ -222,6 +234,7 @@ export default function App() {
     setEditTitle(t.title)
     setEditDesc(t.description ?? '')
     setEditDue(t.dueAt ? t.dueAt.slice(0, 16) : '')
+    setEditPriority(t.priority ?? 'MEDIUM')
   }
 
   function cancelEdit() {
@@ -230,7 +243,7 @@ export default function App() {
 
   async function saveEdit(id: number) {
     if (!editTitle.trim()) return
-    const payload: any = { title: editTitle, description: editDesc, completed: todos.find(t => t.id === id)?.completed ?? false }
+    const payload: any = { title: editTitle, description: editDesc, completed: todos.find(t => t.id === id)?.completed ?? false, priority: editPriority }
     if (editDue) payload.dueAt = editDue
     try {
       const res = await fetch('/api/todos/' + id, {
@@ -240,9 +253,10 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to update todo (${res.status})`)
+      const updated: Todo = await res.json()
+      setTodos(prev => prev.map(t => t.id === id ? updated : t))
       setEditingId(null)
       setError(null)
-      load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update todo')
     }
@@ -301,6 +315,7 @@ export default function App() {
         <select value={sort} onChange={e => setSort(e.target.value)} className="p-2 border rounded">
           <option value="createdAt">Newest</option>
           <option value="dueAt">Due date</option>
+          <option value="priority">Priority</option>
         </select>
       </div>
 
@@ -308,6 +323,12 @@ export default function App() {
         <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
         <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
         <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
+        <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
+          <option value="LOW">Low</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="HIGH">High</option>
+          <option value="URGENT">Urgent</option>
+        </select>
         <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
       </form>
 
@@ -336,6 +357,12 @@ export default function App() {
                   value={editDue}
                   onChange={e => setEditDue(e.target.value)}
                 />
+                <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                  <option value="URGENT">Urgent</option>
+                </select>
                 <div className="flex gap-2 justify-end">
                   <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
                   <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
@@ -345,8 +372,12 @@ export default function App() {
               <div className="flex items-start gap-3">
                 <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
                 <div className="flex-1">
-                  <div className="font-semibold">
-                    {t.title} {t.dueAt ? <span className="text-sm text-gray-500">due {formatDueAt(t.dueAt)}</span> : null}
+                  <div className="font-semibold flex items-center gap-2">
+                    {t.title}
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                      {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                    </span>
+                    {t.dueAt ? <span className="text-sm text-gray-500 font-normal">due {formatDueAt(t.dueAt)}</span> : null}
                   </div>
                   <div className="text-sm text-gray-600">{t.description}</div>
                 </div>
