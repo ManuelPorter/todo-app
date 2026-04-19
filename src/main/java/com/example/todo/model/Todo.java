@@ -33,6 +33,9 @@ public class Todo {
     @JsonIgnore
     private Long userId;
 
+    @Column(name = "parent_id")
+    private Long parentId;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "todo_tags",
@@ -89,4 +92,7 @@ public class Todo {
 
     public List<Long> getTagIds() { return tagIds; }
     public void setTagIds(List<Long> tagIds) { this.tagIds = tagIds; }
+
+    public Long getParentId() { return parentId; }
+    public void setParentId(Long parentId) { this.parentId = parentId; }
 }

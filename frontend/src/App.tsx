@@ -8,6 +8,12 @@ type Tag = {
   color: string
 }
 
+type Subtask = {
+  id: number
+  title: string
+  completed: boolean
+}
+
 type Todo = {
   id: number
   title: string
@@ -18,6 +24,7 @@ type Todo = {
   priority: Priority
   deletedAt?: string
   tags?: Tag[]
+  parentId?: number
 }
 
 type AuthState = {
@@ -136,8 +143,8 @@ export default function App() {
   const [due, setDue] = useState('')
   const [priority, setPriority] = useState<Priority>('MEDIUM')
   const [query, setQuery] = useState('')
-  const [sortField, setSortField] = useState('createdAt')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [sortField, setSortField] = useState('dueAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [dayPage, setDayPage] = useState(0)
   const DAYS_PER_PAGE = 3
   const [error, setError] = useState<string | null>(null)
@@ -156,6 +163,11 @@ export default function App() {
   const [newTagColor, setNewTagColor] = useState('#3B82F6')
   const [editTagIds, setEditTagIds] = useState<number[]>([])
   const [newTodoTagIds, setNewTodoTagIds] = useState<number[]>([])
+
+  const [expandedTodos, setExpandedTodos] = useState<Set<number>>(new Set())
+  const [subtasksMap, setSubtasksMap] = useState<Record<number, Subtask[]>>({})
+  const [addingSubtaskId, setAddingSubtaskId] = useState<number | null>(null)
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
 
   useEffect(() => { if (auth) load() }, [query, auth])
   useEffect(() => { if (auth && view === 'trash') loadTrash() }, [view, auth])
@@ -486,6 +498,59 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to empty trash')
     }
+  }
+
+  async function loadSubtasks(todoId: number) {
+    const res = await fetch(`/api/todos/${todoId}/subtasks`, { headers: authHeaders() })
+    if (res.ok) {
+      const data: Subtask[] = await res.json()
+      setSubtasksMap(prev => ({ ...prev, [todoId]: data }))
+    }
+  }
+
+  function toggleExpand(todoId: number) {
+    setExpandedTodos(prev => {
+      const next = new Set(prev)
+      if (next.has(todoId)) {
+        next.delete(todoId)
+      } else {
+        next.add(todoId)
+        loadSubtasks(todoId)
+      }
+      return next
+    })
+  }
+
+  async function createSubtask(parentId: number) {
+    if (!newSubtaskTitle.trim()) return
+    const res = await fetch(`/api/todos/${parentId}/subtasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ title: newSubtaskTitle.trim() }),
+    })
+    if (res.ok) {
+      setNewSubtaskTitle('')
+      setAddingSubtaskId(null)
+      loadSubtasks(parentId)
+    }
+  }
+
+  async function toggleSubtask(parentId: number, subtaskId: number, checked: boolean) {
+    const res = await fetch(`/api/todos/${subtaskId}`, { headers: authHeaders() })
+    if (!res.ok) return
+    const t = await res.json()
+    t.completed = checked
+    const putRes = await fetch(`/api/todos/${subtaskId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(t),
+    })
+    if (putRes.ok) loadSubtasks(parentId)
+  }
+
+  async function deleteSubtask(parentId: number, subtaskId: number) {
+    const res = await fetch(`/api/todos/${subtaskId}`, { method: 'DELETE', headers: authHeaders() })
+    if (res.ok) loadSubtasks(parentId)
   }
 
   function logout() {
@@ -899,34 +964,96 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-start gap-3">
-                          <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
-                          <div className="flex-1">
-                            <div className="font-semibold flex items-center gap-2 flex-wrap">
-                              {t.title}
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
-                                {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
-                              </span>
-                              {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                        <>
+                          <div className="flex items-start gap-3">
+                            <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
+                            <div className="flex-1">
+                              <div className="font-semibold flex items-center gap-2 flex-wrap">
+                                {t.title}
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                                  {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                                </span>
+                                {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                              </div>
+                              {t.description && <div className="text-sm text-gray-600">{t.description}</div>}
+                              {t.tags && t.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {t.tags.map(tag => (
+                                    <span
+                                      key={tag.id}
+                                      style={{ backgroundColor: tag.color }}
+                                      className="text-xs px-1.5 py-0.5 rounded-full text-white"
+                                    >
+                                      {tag.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            {t.description && <div className="text-sm text-gray-600">{t.description}</div>}
-                            {t.tags && t.tags.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-1.5">
-                                {t.tags.map(tag => (
-                                  <span
-                                    key={tag.id}
-                                    style={{ backgroundColor: tag.color }}
-                                    className="text-xs px-1.5 py-0.5 rounded-full text-white"
-                                  >
-                                    {tag.name}
-                                  </span>
+                            <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
+                            <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Trash</button>
+                          </div>
+                          {/* Subtasks */}
+                          <div className="mt-2 ml-6">
+                            <button
+                              onClick={() => toggleExpand(t.id)}
+                              className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                            >
+                              <span>{expandedTodos.has(t.id) ? '▼' : '▶'}</span>
+                              <span>
+                                Subtasks
+                                {subtasksMap[t.id]?.length
+                                  ? ` · ${subtasksMap[t.id].filter(s => s.completed).length}/${subtasksMap[t.id].length}`
+                                  : ''}
+                              </span>
+                            </button>
+                            {expandedTodos.has(t.id) && (
+                              <div className="mt-1.5 space-y-1">
+                                {subtasksMap[t.id]?.map(s => (
+                                  <div key={s.id} className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={s.completed}
+                                      onChange={e => toggleSubtask(t.id, s.id, e.target.checked)}
+                                      className="mt-px"
+                                    />
+                                    <span className={`text-sm flex-1 ${s.completed ? 'line-through text-gray-400' : ''}`}>
+                                      {s.title}
+                                    </span>
+                                    <button
+                                      onClick={() => deleteSubtask(t.id, s.id)}
+                                      className="text-red-400 hover:text-red-600 text-xs leading-none"
+                                      title="Remove subtask"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
                                 ))}
+                                {addingSubtaskId === t.id ? (
+                                  <div className="flex gap-1 mt-1">
+                                    <input
+                                      className="flex-1 text-sm p-1 border rounded"
+                                      value={newSubtaskTitle}
+                                      onChange={e => setNewSubtaskTitle(e.target.value)}
+                                      onKeyDown={e => { if (e.key === 'Enter') createSubtask(t.id); if (e.key === 'Escape') { setAddingSubtaskId(null); setNewSubtaskTitle('') } }}
+                                      placeholder="Subtask title"
+                                      autoFocus
+                                    />
+                                    <button onClick={() => createSubtask(t.id)} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
+                                    <button onClick={() => { setAddingSubtaskId(null); setNewSubtaskTitle('') }} className="text-xs px-2 py-1 border rounded hover:bg-gray-50">✕</button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => { setAddingSubtaskId(t.id); setNewSubtaskTitle('') }}
+                                    className="text-xs text-blue-500 hover:underline mt-0.5"
+                                  >
+                                    + Add subtask
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
-                          <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
-                          <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Trash</button>
-                        </div>
+                        </>
                       )}
                     </div>
                   ))}
