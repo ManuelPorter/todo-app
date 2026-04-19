@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "todos")
@@ -26,8 +29,21 @@ public class Todo {
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
     private LocalDateTime deletedAt;
+
     @JsonIgnore
     private Long userId;
+
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+        name = "todo_tags",
+        joinColumns = @JoinColumn(name = "todo_id"),
+        inverseJoinColumns = @JoinColumn(name = "tag_id")
+    )
+    private Set<Tag> tags = new HashSet<>();
+
+    // Accepted in requests; not persisted — used to set tags by ID
+    @Transient
+    private List<Long> tagIds;
 
     @PrePersist
     protected void onCreate() {
@@ -67,4 +83,10 @@ public class Todo {
 
     public LocalDateTime getDeletedAt() { return deletedAt; }
     public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+
+    public Set<Tag> getTags() { return tags; }
+    public void setTags(Set<Tag> tags) { this.tags = tags; }
+
+    public List<Long> getTagIds() { return tagIds; }
+    public void setTagIds(List<Long> tagIds) { this.tagIds = tagIds; }
 }

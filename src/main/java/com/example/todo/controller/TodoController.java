@@ -1,6 +1,8 @@
 package com.example.todo.controller;
 
+import com.example.todo.model.Tag;
 import com.example.todo.model.Todo;
+import com.example.todo.repository.TagRepository;
 import com.example.todo.repository.TodoRepository;
 import com.example.todo.repository.UserRepository;
 import jakarta.validation.Valid;
@@ -10,9 +12,11 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -25,16 +29,25 @@ public class TodoController {
 
     private final TodoRepository repo;
     private final UserRepository userRepository;
+    private final TagRepository tagRepository;
 
-    public TodoController(TodoRepository repo, UserRepository userRepository) {
+    public TodoController(TodoRepository repo, UserRepository userRepository, TagRepository tagRepository) {
         this.repo = repo;
         this.userRepository = userRepository;
+        this.tagRepository = tagRepository;
     }
 
     private Long resolveUserId(UserDetails principal) {
         return userRepository.findByUsername(principal.getUsername())
                 .orElseThrow(() -> new RuntimeException("Authenticated user not found"))
                 .getId();
+    }
+
+    private Set<Tag> resolveTagsForUser(List<Long> tagIds, Long userId) {
+        if (tagIds == null || tagIds.isEmpty()) return new HashSet<>();
+        return tagRepository.findAllById(tagIds).stream()
+                .filter(t -> userId.equals(t.getUserId()))
+                .collect(Collectors.toSet());
     }
 
     @GetMapping
@@ -95,8 +108,10 @@ public class TodoController {
     @PostMapping
     public Todo create(@Valid @RequestBody Todo todo,
                        @AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
         todo.setId(null);
-        todo.setUserId(resolveUserId(principal));
+        todo.setUserId(userId);
+        todo.setTags(resolveTagsForUser(todo.getTagIds(), userId));
         return repo.save(todo);
     }
 
@@ -115,6 +130,9 @@ public class TodoController {
         existing.setCompleted(input.isCompleted());
         existing.setDueAt(input.getDueAt());
         existing.setPriority(input.getPriority() != null ? input.getPriority() : existing.getPriority());
+        if (input.getTagIds() != null) {
+            existing.setTags(resolveTagsForUser(input.getTagIds(), userId));
+        }
         return ResponseEntity.ok(repo.save(existing));
     }
 
@@ -203,7 +221,9 @@ public class TodoController {
     @DeleteMapping("/trash")
     public ResponseEntity<Void> emptyTrash(@AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
-        repo.deleteAllTrashedByUserId(userId);
+        Pageable all = PageRequest.of(0, Integer.MAX_VALUE);
+        List<Todo> trashed = repo.findByUserIdAndDeletedAtIsNotNull(userId, all).getContent();
+        repo.deleteAll(trashed);
         return ResponseEntity.noContent().build();
     }
 }

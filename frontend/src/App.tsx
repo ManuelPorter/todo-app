@@ -2,20 +2,32 @@ import React, { useEffect, useState } from 'react'
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
+type Tag = {
+  id: number
+  name: string
+  color: string
+}
+
 type Todo = {
   id: number
   title: string
   description?: string
   completed: boolean
+  createdAt?: string
   dueAt?: string
   priority: Priority
   deletedAt?: string
+  tags?: Tag[]
 }
 
 type AuthState = {
   token: string
   username: string
 }
+
+const TAG_COLORS = ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#6B7280']
+
+const PRIORITY_ORDER: Record<Priority, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, URGENT: 4 }
 
 function getStoredAuth(): AuthState | null {
   try {
@@ -124,7 +136,8 @@ export default function App() {
   const [due, setDue] = useState('')
   const [priority, setPriority] = useState<Priority>('MEDIUM')
   const [query, setQuery] = useState('')
-  const [sort, setSort] = useState('createdAt')
+  const [sortField, setSortField] = useState('createdAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [dayPage, setDayPage] = useState(0)
   const DAYS_PER_PAGE = 3
   const [error, setError] = useState<string | null>(null)
@@ -136,8 +149,17 @@ export default function App() {
   const [editDue, setEditDue] = useState('')
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
 
-  useEffect(() => { if (auth) load() }, [query, sort, auth])
+  const [tags, setTags] = useState<Tag[]>([])
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(null)
+  const [showTagPanel, setShowTagPanel] = useState(false)
+  const [newTagName, setNewTagName] = useState('')
+  const [newTagColor, setNewTagColor] = useState('#3B82F6')
+  const [editTagIds, setEditTagIds] = useState<number[]>([])
+  const [newTodoTagIds, setNewTodoTagIds] = useState<number[]>([])
+
+  useEffect(() => { if (auth) load() }, [query, auth])
   useEffect(() => { if (auth && view === 'trash') loadTrash() }, [view, auth])
+  useEffect(() => { if (auth) loadTags() }, [auth])
 
   function authHeaders(): HeadersInit {
     return auth ? { Authorization: `Bearer ${auth.token}` } : {}
@@ -157,7 +179,6 @@ export default function App() {
       params.set('page', '0')
       params.set('size', '1000')
       if (query) params.set('q', query)
-      if (sort) params.set('sort', sort)
       const res = await fetch('/api/todos?' + params.toString(), { headers: authHeaders() })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to load todos (${res.status})`)
@@ -187,10 +208,37 @@ export default function App() {
     }
   }
 
+  async function loadTags() {
+    const res = await fetch('/api/tags', { headers: authHeaders() })
+    if (res.ok) setTags(await res.json())
+  }
+
+  async function createTag() {
+    if (!newTagName.trim()) return
+    const res = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ name: newTagName.trim(), color: newTagColor }),
+    })
+    if (res.ok) {
+      setNewTagName('')
+      loadTags()
+    }
+  }
+
+  async function deleteTag(id: number) {
+    const res = await fetch('/api/tags/' + id, { method: 'DELETE', headers: authHeaders() })
+    if (res.ok) {
+      if (selectedTagId === id) setSelectedTagId(null)
+      loadTags()
+      load(true)
+    }
+  }
+
   async function create(e: React.FormEvent) {
     e.preventDefault()
     if (!title) return
-    const payload: any = { title, description: desc, priority }
+    const payload: any = { title, description: desc, priority, tagIds: newTodoTagIds }
     if (due) payload.dueAt = due
     try {
       const res = await fetch('/api/todos', {
@@ -200,7 +248,7 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
-      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM')
+      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM'); setNewTodoTagIds([])
       setError(null)
       load(true)
     } catch (err) {
@@ -295,6 +343,7 @@ export default function App() {
     setEditDesc(t.description ?? '')
     setEditDue(t.dueAt ? t.dueAt.slice(0, 16) : '')
     setEditPriority(t.priority ?? 'MEDIUM')
+    setEditTagIds(t.tags?.map(tag => tag.id) ?? [])
   }
 
   function cancelEdit() {
@@ -303,7 +352,13 @@ export default function App() {
 
   async function saveEdit(id: number) {
     if (!editTitle.trim()) return
-    const payload: any = { title: editTitle, description: editDesc, completed: todos.find(t => t.id === id)?.completed ?? false, priority: editPriority }
+    const payload: any = {
+      title: editTitle,
+      description: editDesc,
+      completed: todos.find(t => t.id === id)?.completed ?? false,
+      priority: editPriority,
+      tagIds: editTagIds,
+    }
     if (editDue) payload.dueAt = editDue
     try {
       const res = await fetch('/api/todos/' + id, {
@@ -438,13 +493,55 @@ export default function App() {
     setAuth(null)
     setTodos([])
     setTrashItems([])
+    setTags([])
+    setSelectedTagId(null)
+  }
+
+  function toggleEditTag(tagId: number) {
+    setEditTagIds(prev =>
+      prev.includes(tagId) ? prev.filter(id => id !== tagId) : [...prev, tagId]
+    )
+  }
+
+  function toggleNewTodoTag(tagId: number) {
+    setNewTodoTagIds(prev =>
+      prev.includes(tagId) ? prev.filter(id => id !== tagId) : [...prev, tagId]
+    )
+  }
+
+  function sortTodos(list: Todo[]): Todo[] {
+    return [...list].sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'priority':
+          cmp = (PRIORITY_ORDER[a.priority] ?? 0) - (PRIORITY_ORDER[b.priority] ?? 0)
+          break
+        case 'title':
+          cmp = a.title.localeCompare(b.title)
+          break
+        case 'completed':
+          cmp = Number(a.completed) - Number(b.completed)
+          break
+        case 'dueAt':
+          cmp = (a.dueAt ?? '').localeCompare(b.dueAt ?? '')
+          break
+        default: // createdAt
+          cmp = (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+      }
+      return sortDir === 'desc' ? -cmp : cmp
+    })
   }
 
   if (!auth) {
     return <AuthPage onAuth={setAuth} />
   }
 
-  const allGroups = groupedTodos(todos)
+  const filteredTodos = selectedTagId
+    ? todos.filter(t => t.tags?.some(tag => tag.id === selectedTagId))
+    : todos
+
+  const displayTodos = sortTodos(filteredTodos)
+  const allGroups = groupedTodos(displayTodos)
   const totalDayPages = Math.ceil(allGroups.length / DAYS_PER_PAGE)
   const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
 
@@ -523,6 +620,15 @@ export default function App() {
                     </span>
                   </div>
                   {t.description && <div className="text-sm text-gray-400 line-through">{t.description}</div>}
+                  {t.tags && t.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {t.tags.map(tag => (
+                        <span key={tag.id} style={{ backgroundColor: tag.color }} className="text-xs px-1.5 py-0.5 rounded-full text-white opacity-60">
+                          {tag.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {t.deletedAt && (
                     <div className="text-xs text-gray-400 mt-1">
                       Deleted {new Date(t.deletedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -549,6 +655,82 @@ export default function App() {
         </div>
       ) : (
         <>
+          {/* Tag filter bar */}
+          <div className="flex flex-wrap gap-1.5 mb-3 items-center">
+            {tags.length > 0 && (
+              <button
+                onClick={() => { setSelectedTagId(null); setDayPage(0) }}
+                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${selectedTagId === null ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              >
+                All
+              </button>
+            )}
+            {tags.map(tag => (
+              <button
+                key={tag.id}
+                onClick={() => { setSelectedTagId(selectedTagId === tag.id ? null : tag.id); setDayPage(0) }}
+                style={{ backgroundColor: tag.color }}
+                className={`text-xs px-2.5 py-1 rounded-full text-white transition-opacity ${selectedTagId === tag.id ? 'ring-2 ring-offset-1 ring-gray-400' : 'opacity-75 hover:opacity-100'}`}
+              >
+                {tag.name}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowTagPanel(p => !p)}
+              className="text-xs px-2.5 py-1 rounded-full border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              {showTagPanel ? '✕ Close' : '+ Label'}
+            </button>
+          </div>
+
+          {/* Tag management panel */}
+          {showTagPanel && (
+            <div className="mb-4 p-3 bg-gray-50 rounded border">
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {tags.length === 0 && <span className="text-xs text-gray-400">No labels yet. Create one below.</span>}
+                {tags.map(tag => (
+                  <span key={tag.id} style={{ backgroundColor: tag.color }} className="flex items-center gap-1 text-xs px-2 py-1 rounded-full text-white">
+                    {tag.name}
+                    <button
+                      onClick={() => deleteTag(tag.id)}
+                      className="hover:opacity-70 leading-none"
+                      title="Delete label"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="p-1.5 border rounded text-sm flex-1"
+                  value={newTagName}
+                  onChange={e => setNewTagName(e.target.value)}
+                  placeholder="Label name"
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createTag() } }}
+                />
+                <div className="flex gap-1">
+                  {TAG_COLORS.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewTagColor(c)}
+                      style={{ backgroundColor: c }}
+                      className={`w-5 h-5 rounded-full transition-transform ${newTagColor === c ? 'ring-2 ring-offset-1 ring-gray-500 scale-110' : 'hover:scale-110'}`}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={createTag}
+                  className="text-sm px-2.5 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 mb-4">
             <input
               className="flex-1 p-2 border rounded"
@@ -556,39 +738,74 @@ export default function App() {
               onChange={e => { setQuery(e.target.value); setDayPage(0) }}
               placeholder="Search..."
             />
-            <select value={sort} onChange={e => { setSort(e.target.value); setDayPage(0) }} className="p-2 border rounded">
-              <option value="createdAt">Newest</option>
-              <option value="dueAt">Due date</option>
+            <select
+              value={sortField}
+              onChange={e => { setSortField(e.target.value); setDayPage(0) }}
+              className="p-2 border rounded text-sm"
+            >
+              <option value="createdAt">Date created</option>
+              <option value="dueAt">Due time</option>
               <option value="priority">Priority</option>
+              <option value="title">Title</option>
+              <option value="completed">Status</option>
             </select>
+            <button
+              onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+              className="p-2 border rounded text-sm hover:bg-gray-100"
+              title={sortDir === 'desc' ? 'Descending — click to switch' : 'Ascending — click to switch'}
+            >
+              {sortDir === 'desc' ? '↓' : '↑'}
+            </button>
           </div>
 
-          <form onSubmit={create} className="flex gap-2 mb-4 items-center">
-            <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
-            <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
-            <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
-            <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
-              <option value="LOW">Low</option>
-              <option value="MEDIUM">Medium</option>
-              <option value="HIGH">High</option>
-              <option value="URGENT">Urgent</option>
-            </select>
-            <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
+          <form onSubmit={create} className="mb-4">
+            <div className="flex gap-2 items-center mb-2">
+              <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
+              <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
+              <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
+              <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="URGENT">Urgent</option>
+              </select>
+              <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
+            </div>
+            {tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <span className="text-xs text-gray-500">Labels:</span>
+                {tags.map(tag => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() => toggleNewTodoTag(tag.id)}
+                    style={newTodoTagIds.includes(tag.id) ? { backgroundColor: tag.color } : undefined}
+                    className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                      newTodoTagIds.includes(tag.id)
+                        ? 'text-white border-transparent'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {tag.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </form>
 
           {todos.length > 0 && (
             <div className="flex gap-2 mb-3">
               <button
-                onClick={() => bulkMarkComplete(todos.filter(t => !t.completed).map(t => t.id))}
+                onClick={() => bulkMarkComplete(displayTodos.filter(t => !t.completed).map(t => t.id))}
                 className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-                disabled={todos.every(t => t.completed)}
+                disabled={displayTodos.every(t => t.completed)}
               >
                 Mark all complete
               </button>
               <button
-                onClick={() => bulkDelete(todos.filter(t => t.completed).map(t => t.id))}
+                onClick={() => bulkDelete(displayTodos.filter(t => t.completed).map(t => t.id))}
                 className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                disabled={todos.every(t => !t.completed)}
+                disabled={displayTodos.every(t => !t.completed)}
               >
                 Move completed to trash
               </button>
@@ -597,8 +814,10 @@ export default function App() {
 
           <div className="space-y-6">
             {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
-            {!loading && todos.length === 0 && !error && (
-              <div className="text-sm text-gray-500 text-center py-4">No todos found.</div>
+            {!loading && displayTodos.length === 0 && !error && (
+              <div className="text-sm text-gray-500 text-center py-4">
+                {selectedTagId ? 'No todos with this label.' : 'No todos found.'}
+              </div>
             )}
             {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
               <div key={key}>
@@ -652,6 +871,28 @@ export default function App() {
                             <option value="HIGH">High</option>
                             <option value="URGENT">Urgent</option>
                           </select>
+                          {tags.length > 0 && (
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Labels</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {tags.map(tag => (
+                                  <button
+                                    key={tag.id}
+                                    type="button"
+                                    onClick={() => toggleEditTag(tag.id)}
+                                    style={editTagIds.includes(tag.id) ? { backgroundColor: tag.color } : undefined}
+                                    className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                                      editTagIds.includes(tag.id)
+                                        ? 'text-white border-transparent'
+                                        : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {tag.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <div className="flex gap-2 justify-end">
                             <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
                             <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
@@ -661,14 +902,27 @@ export default function App() {
                         <div className="flex items-start gap-3">
                           <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
                           <div className="flex-1">
-                            <div className="font-semibold flex items-center gap-2">
+                            <div className="font-semibold flex items-center gap-2 flex-wrap">
                               {t.title}
                               <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
                                 {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
                               </span>
                               {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
                             </div>
-                            <div className="text-sm text-gray-600">{t.description}</div>
+                            {t.description && <div className="text-sm text-gray-600">{t.description}</div>}
+                            {t.tags && t.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {t.tags.map(tag => (
+                                  <span
+                                    key={tag.id}
+                                    style={{ backgroundColor: tag.color }}
+                                    className="text-xs px-1.5 py-0.5 rounded-full text-white"
+                                  >
+                                    {tag.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
                           <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Trash</button>
