@@ -121,10 +121,9 @@ export default function App() {
   const [due, setDue] = useState('')
   const [priority, setPriority] = useState<Priority>('MEDIUM')
   const [query, setQuery] = useState('')
-  const [page, setPage] = useState(0)
-  const [size] = useState(6)
-  const [totalPages, setTotalPages] = useState(0)
   const [sort, setSort] = useState('createdAt')
+  const [dayPage, setDayPage] = useState(0)
+  const DAYS_PER_PAGE = 3
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set())
@@ -134,7 +133,7 @@ export default function App() {
   const [editDue, setEditDue] = useState('')
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
 
-  useEffect(() => { if (auth) load() }, [page, query, sort, auth])
+  useEffect(() => { if (auth) load() }, [query, sort, auth])
 
   function authHeaders(): HeadersInit {
     return auth ? { Authorization: `Bearer ${auth.token}` } : {}
@@ -151,8 +150,8 @@ export default function App() {
     if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
-      params.set('page', String(page))
-      params.set('size', String(size))
+      params.set('page', '0')
+      params.set('size', '1000')
       if (query) params.set('q', query)
       if (sort) params.set('sort', sort)
       const res = await fetch('/api/todos?' + params.toString(), { headers: authHeaders() })
@@ -160,7 +159,6 @@ export default function App() {
       if (!res.ok) throw new Error(`Failed to load todos (${res.status})`)
       const data = await res.json()
       setTodos(data.content || [])
-      setTotalPages(data.totalPages || 0)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load todos')
@@ -197,11 +195,53 @@ export default function App() {
     URGENT: { label: 'Urgent', className: 'bg-red-100 text-red-700 font-semibold' },
   }
 
-  function formatDueAt(dueAt?: string) {
+  function formatDueTime(dueAt?: string) {
     if (!dueAt) return ''
     const d = new Date(dueAt)
-    if (Number.isNaN(d.getTime())) return dueAt
-    return d.toLocaleString()
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  }
+
+  function dayKey(dueAt?: string): string {
+    if (!dueAt) return 'none'
+    const d = new Date(dueAt)
+    if (Number.isNaN(d.getTime())) return 'none'
+    return d.toLocaleDateString('en-CA')
+  }
+
+  function dayLabel(key: string): { text: string; overdue: boolean } {
+    if (key === 'none') return { text: 'No due date', overdue: false }
+    const today = new Date()
+    const todayKey = today.toLocaleDateString('en-CA')
+    const tomorrow = new Date(today)
+    tomorrow.setDate(today.getDate() + 1)
+    const tomorrowKey = tomorrow.toLocaleDateString('en-CA')
+    const formatted = new Date(key + 'T00:00:00').toLocaleDateString(undefined, {
+      weekday: 'short', month: 'short', day: 'numeric',
+    })
+    if (key === todayKey) return { text: 'Today · ' + formatted, overdue: false }
+    if (key === tomorrowKey) return { text: 'Tomorrow · ' + formatted, overdue: false }
+    if (key < todayKey) return { text: 'Overdue · ' + formatted, overdue: true }
+    return { text: formatted, overdue: false }
+  }
+
+  function groupedTodos(list: Todo[]): { key: string; label: string; overdue: boolean; items: Todo[] }[] {
+    const map = new Map<string, Todo[]>()
+    for (const t of list) {
+      const key = dayKey(t.dueAt)
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(t)
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => {
+        if (a === 'none') return 1
+        if (b === 'none') return -1
+        return b.localeCompare(a)
+      })
+      .map(([key, items]) => {
+        const { text, overdue } = dayLabel(key)
+        return { key, label: text, overdue, items }
+      })
   }
 
   async function toggle(id: number, checked: boolean) {
@@ -262,6 +302,40 @@ export default function App() {
     }
   }
 
+  async function bulkMarkComplete(ids: number[]) {
+    if (ids.length === 0) return
+    try {
+      const res = await fetch('/api/todos/bulk/mark-complete', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(ids),
+      })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to mark complete (${res.status})`)
+      setError(null)
+      load(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark complete')
+    }
+  }
+
+  async function bulkDelete(ids: number[]) {
+    if (ids.length === 0) return
+    try {
+      const res = await fetch('/api/todos/bulk', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(ids),
+      })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to delete (${res.status})`)
+      setError(null)
+      load(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    }
+  }
+
   async function remove(id: number) {
     if (pendingIds.has(id)) return
     setPendingIds(prev => new Set(prev).add(id))
@@ -288,6 +362,10 @@ export default function App() {
     return <AuthPage onAuth={setAuth} />
   }
 
+  const allGroups = groupedTodos(todos)
+  const totalDayPages = Math.ceil(allGroups.length / DAYS_PER_PAGE)
+  const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
+
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-4">
@@ -309,10 +387,10 @@ export default function App() {
         <input
           className="flex-1 p-2 border rounded"
           value={query}
-          onChange={e => { setQuery(e.target.value); setPage(0) }}
+          onChange={e => { setQuery(e.target.value); setDayPage(0) }}
           placeholder="Search..."
         />
-        <select value={sort} onChange={e => setSort(e.target.value)} className="p-2 border rounded">
+        <select value={sort} onChange={e => { setSort(e.target.value); setDayPage(0) }} className="p-2 border rounded">
           <option value="createdAt">Newest</option>
           <option value="dueAt">Due date</option>
           <option value="priority">Priority</option>
@@ -332,73 +410,120 @@ export default function App() {
         <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
       </form>
 
-      <div className="space-y-3">
+      {todos.length > 0 && (
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={() => bulkMarkComplete(todos.filter(t => !t.completed).map(t => t.id))}
+            className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+            disabled={todos.every(t => t.completed)}
+          >
+            Mark all complete
+          </button>
+          <button
+            onClick={() => bulkDelete(todos.filter(t => t.completed).map(t => t.id))}
+            className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            disabled={todos.every(t => !t.completed)}
+          >
+            Delete completed
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-6">
         {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
-        {!loading && todos.map(t => (
-          <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
-            {editingId === t.id ? (
-              <div className="flex flex-col gap-2">
-                <input
-                  className="p-2 border rounded text-sm"
-                  value={editTitle}
-                  onChange={e => setEditTitle(e.target.value)}
-                  placeholder="Title"
-                  autoFocus
-                />
-                <input
-                  className="p-2 border rounded text-sm"
-                  value={editDesc}
-                  onChange={e => setEditDesc(e.target.value)}
-                  placeholder="Description"
-                />
-                <input
-                  type="datetime-local"
-                  className="p-2 border rounded text-sm"
-                  value={editDue}
-                  onChange={e => setEditDue(e.target.value)}
-                />
-                <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
-                  <option value="LOW">Low</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="HIGH">High</option>
-                  <option value="URGENT">Urgent</option>
-                </select>
-                <div className="flex gap-2 justify-end">
-                  <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
-                  <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-start gap-3">
-                <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
-                <div className="flex-1">
-                  <div className="font-semibold flex items-center gap-2">
-                    {t.title}
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
-                      {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
-                    </span>
-                    {t.dueAt ? <span className="text-sm text-gray-500 font-normal">due {formatDueAt(t.dueAt)}</span> : null}
-                  </div>
-                  <div className="text-sm text-gray-600">{t.description}</div>
-                </div>
-                <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
-                <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Delete</button>
-              </div>
-            )}
-          </div>
-        ))}
         {!loading && todos.length === 0 && !error && (
           <div className="text-sm text-gray-500 text-center py-4">No todos found.</div>
         )}
+        {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
+          <div key={key}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
+                {label}
+              </span>
+              <div className={`flex-1 h-px ${overdue ? 'bg-red-200' : 'bg-gray-200'}`} />
+              <button
+                onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
+                disabled={items.every(t => t.completed)}
+                className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-40"
+              >
+                Mark complete
+              </button>
+              <button
+                onClick={() => bulkDelete(items.filter(t => t.completed).map(t => t.id))}
+                disabled={items.every(t => !t.completed)}
+                className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-40"
+              >
+                Delete completed
+              </button>
+            </div>
+            <div className="space-y-3">
+              {items.map(t => (
+                <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
+                  {editingId === t.id ? (
+                    <div className="flex flex-col gap-2">
+                      <input
+                        className="p-2 border rounded text-sm"
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        placeholder="Title"
+                        autoFocus
+                      />
+                      <input
+                        className="p-2 border rounded text-sm"
+                        value={editDesc}
+                        onChange={e => setEditDesc(e.target.value)}
+                        placeholder="Description"
+                      />
+                      <input
+                        type="datetime-local"
+                        className="p-2 border rounded text-sm"
+                        value={editDue}
+                        onChange={e => setEditDue(e.target.value)}
+                      />
+                      <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
+                        <option value="LOW">Low</option>
+                        <option value="MEDIUM">Medium</option>
+                        <option value="HIGH">High</option>
+                        <option value="URGENT">Urgent</option>
+                      </select>
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
+                        <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-3">
+                      <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
+                      <div className="flex-1">
+                        <div className="font-semibold flex items-center gap-2">
+                          {t.title}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                            {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                          </span>
+                          {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                        </div>
+                        <div className="text-sm text-gray-600">{t.description}</div>
+                      </div>
+                      <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
+                      <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Delete</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="flex items-center justify-between mt-4">
-        <div className="text-sm text-gray-600">Page {page + 1} of {Math.max(1, totalPages)}</div>
-        <div className="flex gap-2">
-          <button disabled={page <= 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="px-3 py-1 border rounded">Prev</button>
-          <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)} className="px-3 py-1 border rounded">Next</button>
+      {totalDayPages > 1 && (
+        <div className="flex items-center justify-between mt-4">
+          <div className="text-sm text-gray-600">Page {dayPage + 1} of {totalDayPages}</div>
+          <div className="flex gap-2">
+            <button disabled={dayPage <= 0} onClick={() => setDayPage(p => p - 1)} className="px-3 py-1 border rounded disabled:opacity-50">Prev</button>
+            <button disabled={dayPage + 1 >= totalDayPages} onClick={() => setDayPage(p => p + 1)} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
