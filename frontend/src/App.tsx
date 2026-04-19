@@ -9,6 +9,7 @@ type Todo = {
   completed: boolean
   dueAt?: string
   priority: Priority
+  deletedAt?: string
 }
 
 type AuthState = {
@@ -115,7 +116,9 @@ function AuthPage({ onAuth }: { onAuth: (auth: AuthState) => void }) {
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(getStoredAuth)
+  const [view, setView] = useState<'todos' | 'trash'>('todos')
   const [todos, setTodos] = useState<Todo[]>([])
+  const [trashItems, setTrashItems] = useState<Todo[]>([])
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [due, setDue] = useState('')
@@ -134,6 +137,7 @@ export default function App() {
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
 
   useEffect(() => { if (auth) load() }, [query, sort, auth])
+  useEffect(() => { if (auth && view === 'trash') loadTrash() }, [view, auth])
 
   function authHeaders(): HeadersInit {
     return auth ? { Authorization: `Bearer ${auth.token}` } : {}
@@ -162,6 +166,22 @@ export default function App() {
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load todos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function loadTrash(silent = false) {
+    if (!silent) setLoading(true)
+    try {
+      const res = await fetch('/api/todos/trash', { headers: authHeaders() })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to load trash (${res.status})`)
+      const data = await res.json()
+      setTrashItems(data.content || [])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load trash')
     } finally {
       setLoading(false)
     }
@@ -328,11 +348,11 @@ export default function App() {
         body: JSON.stringify(ids),
       })
       handleUnauthorized(res.status)
-      if (!res.ok) throw new Error(`Failed to delete (${res.status})`)
+      if (!res.ok) throw new Error(`Failed to move to trash (${res.status})`)
       setError(null)
       load(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete')
+      setError(err instanceof Error ? err.message : 'Failed to move to trash')
     }
   }
 
@@ -342,13 +362,74 @@ export default function App() {
     try {
       const res = await fetch('/api/todos/' + id, { method: 'DELETE', headers: authHeaders() })
       handleUnauthorized(res.status)
-      if (!res.ok) throw new Error(`Failed to delete todo (${res.status})`)
+      if (!res.ok) throw new Error(`Failed to move to trash (${res.status})`)
       setError(null)
       load(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete todo')
+      setError(err instanceof Error ? err.message : 'Failed to move to trash')
     } finally {
       setPendingIds(prev => { const s = new Set(prev); s.delete(id); return s })
+    }
+  }
+
+  async function restore(id: number) {
+    if (pendingIds.has(id)) return
+    setPendingIds(prev => new Set(prev).add(id))
+    try {
+      const res = await fetch('/api/todos/' + id + '/restore', { method: 'PUT', headers: authHeaders() })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to restore todo (${res.status})`)
+      setError(null)
+      loadTrash(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore todo')
+    } finally {
+      setPendingIds(prev => { const s = new Set(prev); s.delete(id); return s })
+    }
+  }
+
+  async function permanentDelete(id: number) {
+    if (pendingIds.has(id)) return
+    setPendingIds(prev => new Set(prev).add(id))
+    try {
+      const res = await fetch('/api/todos/' + id + '/permanent', { method: 'DELETE', headers: authHeaders() })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to permanently delete (${res.status})`)
+      setError(null)
+      loadTrash(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to permanently delete')
+    } finally {
+      setPendingIds(prev => { const s = new Set(prev); s.delete(id); return s })
+    }
+  }
+
+  async function bulkRestore(ids: number[]) {
+    if (ids.length === 0) return
+    try {
+      const res = await fetch('/api/todos/bulk/restore', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(ids),
+      })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to restore (${res.status})`)
+      setError(null)
+      loadTrash(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to restore')
+    }
+  }
+
+  async function emptyTrash() {
+    try {
+      const res = await fetch('/api/todos/trash', { method: 'DELETE', headers: authHeaders() })
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to empty trash (${res.status})`)
+      setError(null)
+      loadTrash(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to empty trash')
     }
   }
 
@@ -356,6 +437,7 @@ export default function App() {
     localStorage.removeItem('auth')
     setAuth(null)
     setTodos([])
+    setTrashItems([])
   }
 
   if (!auth) {
@@ -376,6 +458,24 @@ export default function App() {
         </div>
       </div>
 
+      <div className="flex gap-1 mb-4 border-b">
+        <button
+          onClick={() => setView('todos')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${view === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+        >
+          Todos
+        </button>
+        <button
+          onClick={() => setView('trash')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'trash' ? 'border-red-500 text-red-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+        >
+          Trash
+          {trashItems.length > 0 && (
+            <span className="text-xs bg-red-100 text-red-600 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
+          )}
+        </button>
+      </div>
+
       {error && (
         <div className="flex items-center justify-between mb-4 p-3 bg-red-100 border border-red-300 text-red-800 rounded">
           <span>{error}</span>
@@ -383,146 +483,214 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-4">
-        <input
-          className="flex-1 p-2 border rounded"
-          value={query}
-          onChange={e => { setQuery(e.target.value); setDayPage(0) }}
-          placeholder="Search..."
-        />
-        <select value={sort} onChange={e => { setSort(e.target.value); setDayPage(0) }} className="p-2 border rounded">
-          <option value="createdAt">Newest</option>
-          <option value="dueAt">Due date</option>
-          <option value="priority">Priority</option>
-        </select>
-      </div>
-
-      <form onSubmit={create} className="flex gap-2 mb-4 items-center">
-        <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
-        <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
-        <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
-        <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
-          <option value="LOW">Low</option>
-          <option value="MEDIUM">Medium</option>
-          <option value="HIGH">High</option>
-          <option value="URGENT">Urgent</option>
-        </select>
-        <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
-      </form>
-
-      {todos.length > 0 && (
-        <div className="flex gap-2 mb-3">
-          <button
-            onClick={() => bulkMarkComplete(todos.filter(t => !t.completed).map(t => t.id))}
-            className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-            disabled={todos.every(t => t.completed)}
-          >
-            Mark all complete
-          </button>
-          <button
-            onClick={() => bulkDelete(todos.filter(t => t.completed).map(t => t.id))}
-            className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-            disabled={todos.every(t => !t.completed)}
-          >
-            Delete completed
-          </button>
-        </div>
-      )}
-
-      <div className="space-y-6">
-        {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
-        {!loading && todos.length === 0 && !error && (
-          <div className="text-sm text-gray-500 text-center py-4">No todos found.</div>
-        )}
-        {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
-          <div key={key}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
-                {label}
-              </span>
-              <div className={`flex-1 h-px ${overdue ? 'bg-red-200' : 'bg-gray-200'}`} />
-              <button
-                onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
-                disabled={items.every(t => t.completed)}
-                className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-40"
-              >
-                Mark complete
-              </button>
-              <button
-                onClick={() => bulkDelete(items.filter(t => t.completed).map(t => t.id))}
-                disabled={items.every(t => !t.completed)}
-                className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-40"
-              >
-                Delete completed
-              </button>
+      {view === 'trash' ? (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-gray-500">{trashItems.length} item{trashItems.length !== 1 ? 's' : ''} in trash</span>
+            <div className="flex gap-2">
+              {trashItems.length > 0 && (
+                <>
+                  <button
+                    onClick={() => bulkRestore(trashItems.map(t => t.id))}
+                    className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                  >
+                    Restore all
+                  </button>
+                  <button
+                    onClick={emptyTrash}
+                    className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                  >
+                    Empty trash
+                  </button>
+                </>
+              )}
             </div>
-            <div className="space-y-3">
-              {items.map(t => (
-                <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
-                  {editingId === t.id ? (
-                    <div className="flex flex-col gap-2">
-                      <input
-                        className="p-2 border rounded text-sm"
-                        value={editTitle}
-                        onChange={e => setEditTitle(e.target.value)}
-                        placeholder="Title"
-                        autoFocus
-                      />
-                      <input
-                        className="p-2 border rounded text-sm"
-                        value={editDesc}
-                        onChange={e => setEditDesc(e.target.value)}
-                        placeholder="Description"
-                      />
-                      <input
-                        type="datetime-local"
-                        className="p-2 border rounded text-sm"
-                        value={editDue}
-                        onChange={e => setEditDue(e.target.value)}
-                      />
-                      <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
-                        <option value="LOW">Low</option>
-                        <option value="MEDIUM">Medium</option>
-                        <option value="HIGH">High</option>
-                        <option value="URGENT">Urgent</option>
-                      </select>
-                      <div className="flex gap-2 justify-end">
-                        <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
-                        <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start gap-3">
-                      <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
-                      <div className="flex-1">
-                        <div className="font-semibold flex items-center gap-2">
-                          {t.title}
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
-                            {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
-                          </span>
-                          {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
-                        </div>
-                        <div className="text-sm text-gray-600">{t.description}</div>
-                      </div>
-                      <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
-                      <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Delete</button>
+          </div>
+
+          {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
+          {!loading && trashItems.length === 0 && (
+            <div className="text-sm text-gray-500 text-center py-8">Trash is empty.</div>
+          )}
+
+          <div className="space-y-3">
+            {trashItems.map(t => (
+              <div key={t.id} className="p-3 bg-white rounded shadow opacity-75 flex items-start gap-3">
+                <div className="flex-1">
+                  <div className="font-semibold flex items-center gap-2 line-through text-gray-400">
+                    {t.title}
+                    <span className={`text-xs px-1.5 py-0.5 rounded no-underline ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                      {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                    </span>
+                  </div>
+                  {t.description && <div className="text-sm text-gray-400 line-through">{t.description}</div>}
+                  {t.deletedAt && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      Deleted {new Date(t.deletedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {totalDayPages > 1 && (
-        <div className="flex items-center justify-between mt-4">
-          <div className="text-sm text-gray-600">Page {dayPage + 1} of {totalDayPages}</div>
-          <div className="flex gap-2">
-            <button disabled={dayPage <= 0} onClick={() => setDayPage(p => p - 1)} className="px-3 py-1 border rounded disabled:opacity-50">Prev</button>
-            <button disabled={dayPage + 1 >= totalDayPages} onClick={() => setDayPage(p => p + 1)} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
+                <button
+                  onClick={() => restore(t.id)}
+                  disabled={pendingIds.has(t.id)}
+                  className="text-green-600 text-sm disabled:opacity-50"
+                >
+                  Restore
+                </button>
+                <button
+                  onClick={() => permanentDelete(t.id)}
+                  disabled={pendingIds.has(t.id)}
+                  className="text-red-600 text-sm disabled:opacity-50"
+                >
+                  Delete forever
+                </button>
+              </div>
+            ))}
           </div>
         </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 mb-4">
+            <input
+              className="flex-1 p-2 border rounded"
+              value={query}
+              onChange={e => { setQuery(e.target.value); setDayPage(0) }}
+              placeholder="Search..."
+            />
+            <select value={sort} onChange={e => { setSort(e.target.value); setDayPage(0) }} className="p-2 border rounded">
+              <option value="createdAt">Newest</option>
+              <option value="dueAt">Due date</option>
+              <option value="priority">Priority</option>
+            </select>
+          </div>
+
+          <form onSubmit={create} className="flex gap-2 mb-4 items-center">
+            <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
+            <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
+            <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
+            <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
+              <option value="LOW">Low</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="HIGH">High</option>
+              <option value="URGENT">Urgent</option>
+            </select>
+            <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
+          </form>
+
+          {todos.length > 0 && (
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => bulkMarkComplete(todos.filter(t => !t.completed).map(t => t.id))}
+                className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                disabled={todos.every(t => t.completed)}
+              >
+                Mark all complete
+              </button>
+              <button
+                onClick={() => bulkDelete(todos.filter(t => t.completed).map(t => t.id))}
+                className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                disabled={todos.every(t => !t.completed)}
+              >
+                Move completed to trash
+              </button>
+            </div>
+          )}
+
+          <div className="space-y-6">
+            {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
+            {!loading && todos.length === 0 && !error && (
+              <div className="text-sm text-gray-500 text-center py-4">No todos found.</div>
+            )}
+            {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
+              <div key={key}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
+                    {label}
+                  </span>
+                  <div className={`flex-1 h-px ${overdue ? 'bg-red-200' : 'bg-gray-200'}`} />
+                  <button
+                    onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
+                    disabled={items.every(t => t.completed)}
+                    className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-40"
+                  >
+                    Mark complete
+                  </button>
+                  <button
+                    onClick={() => bulkDelete(items.filter(t => t.completed).map(t => t.id))}
+                    disabled={items.every(t => !t.completed)}
+                    className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-40"
+                  >
+                    Trash completed
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {items.map(t => (
+                    <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
+                      {editingId === t.id ? (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            className="p-2 border rounded text-sm"
+                            value={editTitle}
+                            onChange={e => setEditTitle(e.target.value)}
+                            placeholder="Title"
+                            autoFocus
+                          />
+                          <input
+                            className="p-2 border rounded text-sm"
+                            value={editDesc}
+                            onChange={e => setEditDesc(e.target.value)}
+                            placeholder="Description"
+                          />
+                          <input
+                            type="datetime-local"
+                            className="p-2 border rounded text-sm"
+                            value={editDue}
+                            onChange={e => setEditDue(e.target.value)}
+                          />
+                          <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
+                            <option value="LOW">Low</option>
+                            <option value="MEDIUM">Medium</option>
+                            <option value="HIGH">High</option>
+                            <option value="URGENT">Urgent</option>
+                          </select>
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
+                            <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-3">
+                          <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
+                          <div className="flex-1">
+                            <div className="font-semibold flex items-center gap-2">
+                              {t.title}
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                                {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                              </span>
+                              {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                            </div>
+                            <div className="text-sm text-gray-600">{t.description}</div>
+                          </div>
+                          <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
+                          <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Trash</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {totalDayPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-gray-600">Page {dayPage + 1} of {totalDayPages}</div>
+              <div className="flex gap-2">
+                <button disabled={dayPage <= 0} onClick={() => setDayPage(p => p - 1)} className="px-3 py-1 border rounded disabled:opacity-50">Prev</button>
+                <button disabled={dayPage + 1 >= totalDayPages} onClick={() => setDayPage(p => p + 1)} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

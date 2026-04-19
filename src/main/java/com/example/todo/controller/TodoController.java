@@ -9,6 +9,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,11 +50,29 @@ public class TodoController {
         Pageable pageable = PageRequest.of(page, size, sortObj);
         Page<Todo> p;
         if (q == null || q.isBlank()) {
-            p = repo.findByUserId(userId, pageable);
+            p = repo.findByUserIdAndDeletedAtIsNull(userId, pageable);
         } else {
-            p = repo.findByUserIdAndTitleContainingIgnoreCaseOrUserIdAndDescriptionContainingIgnoreCase(
+            p = repo.findByUserIdAndDeletedAtIsNullAndTitleContainingIgnoreCaseOrUserIdAndDeletedAtIsNullAndDescriptionContainingIgnoreCase(
                     userId, q, userId, q, pageable);
         }
+        return Map.of(
+                "content", p.getContent(),
+                "page", p.getNumber(),
+                "size", p.getSize(),
+                "totalElements", p.getTotalElements(),
+                "totalPages", p.getTotalPages()
+        );
+    }
+
+    @GetMapping("/trash")
+    public Map<String, Object> trash(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1000") int size,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        Long userId = resolveUserId(principal);
+        Pageable pageable = PageRequest.of(page, size, Sort.by("deletedAt").descending());
+        Page<Todo> p = repo.findByUserIdAndDeletedAtIsNotNull(userId, pageable);
         return Map.of(
                 "content", p.getContent(),
                 "page", p.getNumber(),
@@ -68,7 +87,7 @@ public class TodoController {
                                     @AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
         return repo.findById(id)
-                .filter(t -> userId.equals(t.getUserId()))
+                .filter(t -> userId.equals(t.getUserId()) && t.getDeletedAt() == null)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -87,7 +106,7 @@ public class TodoController {
                                        @AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
         Optional<Todo> found = repo.findById(id);
-        if (found.isEmpty() || !userId.equals(found.get().getUserId())) {
+        if (found.isEmpty() || !userId.equals(found.get().getUserId()) || found.get().getDeletedAt() != null) {
             return ResponseEntity.notFound().build();
         }
         Todo existing = found.get();
@@ -104,11 +123,38 @@ public class TodoController {
                                        @AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
         Optional<Todo> found = repo.findById(id);
+        if (found.isEmpty() || !userId.equals(found.get().getUserId()) || found.get().getDeletedAt() != null) {
+            return ResponseEntity.notFound().build();
+        }
+        Todo todo = found.get();
+        todo.setDeletedAt(LocalDateTime.now());
+        repo.save(todo);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{id}/permanent")
+    public ResponseEntity<Void> permanentDelete(@PathVariable Long id,
+                                                @AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
+        Optional<Todo> found = repo.findById(id);
         if (found.isEmpty() || !userId.equals(found.get().getUserId())) {
             return ResponseEntity.notFound().build();
         }
         repo.deleteById(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{id}/restore")
+    public ResponseEntity<Todo> restore(@PathVariable Long id,
+                                        @AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
+        Optional<Todo> found = repo.findById(id);
+        if (found.isEmpty() || !userId.equals(found.get().getUserId()) || found.get().getDeletedAt() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        Todo todo = found.get();
+        todo.setDeletedAt(null);
+        return ResponseEntity.ok(repo.save(todo));
     }
 
     @PutMapping("/bulk/mark-complete")
@@ -118,7 +164,7 @@ public class TodoController {
         if (ids == null || ids.isEmpty()) return ResponseEntity.ok(Map.of("updatedCount", 0));
         Long userId = resolveUserId(principal);
         List<Todo> toUpdate = repo.findAllById(ids).stream()
-                .filter(t -> userId.equals(t.getUserId()) && !t.isCompleted())
+                .filter(t -> userId.equals(t.getUserId()) && !t.isCompleted() && t.getDeletedAt() == null)
                 .collect(Collectors.toList());
         toUpdate.forEach(t -> t.setCompleted(true));
         repo.saveAll(toUpdate);
@@ -132,9 +178,32 @@ public class TodoController {
         if (ids == null || ids.isEmpty()) return ResponseEntity.ok(Map.of("deletedCount", 0));
         Long userId = resolveUserId(principal);
         List<Todo> toDelete = repo.findAllById(ids).stream()
-                .filter(t -> userId.equals(t.getUserId()))
+                .filter(t -> userId.equals(t.getUserId()) && t.getDeletedAt() == null)
                 .collect(Collectors.toList());
-        repo.deleteAll(toDelete);
+        LocalDateTime now = LocalDateTime.now();
+        toDelete.forEach(t -> t.setDeletedAt(now));
+        repo.saveAll(toDelete);
         return ResponseEntity.ok(Map.of("deletedCount", toDelete.size()));
+    }
+
+    @PutMapping("/bulk/restore")
+    public ResponseEntity<Map<String, Integer>> bulkRestore(
+            @RequestBody List<Long> ids,
+            @AuthenticationPrincipal UserDetails principal) {
+        if (ids == null || ids.isEmpty()) return ResponseEntity.ok(Map.of("restoredCount", 0));
+        Long userId = resolveUserId(principal);
+        List<Todo> toRestore = repo.findAllById(ids).stream()
+                .filter(t -> userId.equals(t.getUserId()) && t.getDeletedAt() != null)
+                .collect(Collectors.toList());
+        toRestore.forEach(t -> t.setDeletedAt(null));
+        repo.saveAll(toRestore);
+        return ResponseEntity.ok(Map.of("restoredCount", toRestore.size()));
+    }
+
+    @DeleteMapping("/trash")
+    public ResponseEntity<Void> emptyTrash(@AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
+        repo.deleteAllTrashedByUserId(userId);
+        return ResponseEntity.noContent().build();
     }
 }
