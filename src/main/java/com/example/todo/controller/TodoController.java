@@ -1,5 +1,6 @@
 package com.example.todo.controller;
 
+import com.example.todo.model.Priority;
 import com.example.todo.model.Tag;
 import com.example.todo.model.Todo;
 import com.example.todo.repository.TagRepository;
@@ -63,10 +64,9 @@ public class TodoController {
         Pageable pageable = PageRequest.of(page, size, sortObj);
         Page<Todo> p;
         if (q == null || q.isBlank()) {
-            p = repo.findByUserIdAndDeletedAtIsNull(userId, pageable);
+            p = repo.findByUserIdAndDeletedAtIsNullAndParentIdIsNull(userId, pageable);
         } else {
-            p = repo.findByUserIdAndDeletedAtIsNullAndTitleContainingIgnoreCaseOrUserIdAndDeletedAtIsNullAndDescriptionContainingIgnoreCase(
-                    userId, q, userId, q, pageable);
+            p = repo.searchTopLevel(userId, q, pageable);
         }
         return Map.of(
                 "content", p.getContent(),
@@ -85,7 +85,7 @@ public class TodoController {
     ) {
         Long userId = resolveUserId(principal);
         Pageable pageable = PageRequest.of(page, size, Sort.by("deletedAt").descending());
-        Page<Todo> p = repo.findByUserIdAndDeletedAtIsNotNull(userId, pageable);
+        Page<Todo> p = repo.findByUserIdAndDeletedAtIsNotNullAndParentIdIsNull(userId, pageable);
         return Map.of(
                 "content", p.getContent(),
                 "page", p.getNumber(),
@@ -103,6 +103,36 @@ public class TodoController {
                 .filter(t -> userId.equals(t.getUserId()) && t.getDeletedAt() == null)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/subtasks")
+    public ResponseEntity<List<Todo>> getSubtasks(@PathVariable Long id,
+                                                   @AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
+        Optional<Todo> parent = repo.findById(id);
+        if (parent.isEmpty() || !userId.equals(parent.get().getUserId()) || parent.get().getDeletedAt() != null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(repo.findByParentIdAndUserIdAndDeletedAtIsNull(id, userId));
+    }
+
+    @PostMapping("/{id}/subtasks")
+    public ResponseEntity<Todo> createSubtask(@PathVariable Long id,
+                                               @RequestBody Map<String, String> body,
+                                               @AuthenticationPrincipal UserDetails principal) {
+        Long userId = resolveUserId(principal);
+        Optional<Todo> parent = repo.findById(id);
+        if (parent.isEmpty() || !userId.equals(parent.get().getUserId()) || parent.get().getDeletedAt() != null) {
+            return ResponseEntity.notFound().build();
+        }
+        String title = body.get("title");
+        if (title == null || title.isBlank()) return ResponseEntity.badRequest().build();
+        Todo subtask = new Todo();
+        subtask.setTitle(title.trim());
+        subtask.setUserId(userId);
+        subtask.setParentId(id);
+        subtask.setPriority(Priority.MEDIUM);
+        return ResponseEntity.ok(repo.save(subtask));
     }
 
     @PostMapping
@@ -144,9 +174,13 @@ public class TodoController {
         if (found.isEmpty() || !userId.equals(found.get().getUserId()) || found.get().getDeletedAt() != null) {
             return ResponseEntity.notFound().build();
         }
+        LocalDateTime now = LocalDateTime.now();
         Todo todo = found.get();
-        todo.setDeletedAt(LocalDateTime.now());
+        todo.setDeletedAt(now);
         repo.save(todo);
+        List<Todo> subtasks = repo.findByParentIdAndUserIdAndDeletedAtIsNull(id, userId);
+        subtasks.forEach(s -> s.setDeletedAt(now));
+        repo.saveAll(subtasks);
         return ResponseEntity.noContent().build();
     }
 
@@ -158,6 +192,8 @@ public class TodoController {
         if (found.isEmpty() || !userId.equals(found.get().getUserId())) {
             return ResponseEntity.notFound().build();
         }
+        List<Todo> subtasks = repo.findByParentIdAndUserId(id, userId);
+        repo.deleteAll(subtasks);
         repo.deleteById(id);
         return ResponseEntity.noContent().build();
     }
@@ -172,7 +208,13 @@ public class TodoController {
         }
         Todo todo = found.get();
         todo.setDeletedAt(null);
-        return ResponseEntity.ok(repo.save(todo));
+        repo.save(todo);
+        List<Todo> subtasks = repo.findByParentIdAndUserId(id, userId);
+        subtasks.stream()
+                .filter(s -> s.getDeletedAt() != null)
+                .forEach(s -> s.setDeletedAt(null));
+        repo.saveAll(subtasks);
+        return ResponseEntity.ok(todo);
     }
 
     @PutMapping("/bulk/mark-complete")
@@ -201,6 +243,11 @@ public class TodoController {
         LocalDateTime now = LocalDateTime.now();
         toDelete.forEach(t -> t.setDeletedAt(now));
         repo.saveAll(toDelete);
+        for (Todo parent : toDelete) {
+            List<Todo> subtasks = repo.findByParentIdAndUserIdAndDeletedAtIsNull(parent.getId(), userId);
+            subtasks.forEach(s -> s.setDeletedAt(now));
+            repo.saveAll(subtasks);
+        }
         return ResponseEntity.ok(Map.of("deletedCount", toDelete.size()));
     }
 
@@ -215,6 +262,11 @@ public class TodoController {
                 .collect(Collectors.toList());
         toRestore.forEach(t -> t.setDeletedAt(null));
         repo.saveAll(toRestore);
+        for (Todo parent : toRestore) {
+            List<Todo> subtasks = repo.findByParentIdAndUserId(parent.getId(), userId);
+            subtasks.stream().filter(s -> s.getDeletedAt() != null).forEach(s -> s.setDeletedAt(null));
+            repo.saveAll(subtasks);
+        }
         return ResponseEntity.ok(Map.of("restoredCount", toRestore.size()));
     }
 
@@ -222,7 +274,11 @@ public class TodoController {
     public ResponseEntity<Void> emptyTrash(@AuthenticationPrincipal UserDetails principal) {
         Long userId = resolveUserId(principal);
         Pageable all = PageRequest.of(0, Integer.MAX_VALUE);
-        List<Todo> trashed = repo.findByUserIdAndDeletedAtIsNotNull(userId, all).getContent();
+        List<Todo> trashed = repo.findByUserIdAndDeletedAtIsNotNullAndParentIdIsNull(userId, all).getContent();
+        for (Todo parent : trashed) {
+            List<Todo> subtasks = repo.findByParentIdAndUserId(parent.getId(), userId);
+            repo.deleteAll(subtasks);
+        }
         repo.deleteAll(trashed);
         return ResponseEntity.noContent().build();
     }
