@@ -25,6 +25,7 @@ public class Todo {
 
     private LocalDateTime createdAt;
     private LocalDateTime dueAt;
+    private LocalDateTime deletedAt;
     @JsonIgnore
     private Long userId;
 
@@ -63,4 +64,7 @@ public class Todo {
 
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }
+
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
 }
