@@ -201,6 +201,72 @@ class TodoControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ── Bulk operations ──────────────────────────────────────────────────────
+
+    @Test
+    void bulkMarkComplete_completesSpecifiedTodos() throws Exception {
+        long id1 = createTodo("Task A");
+        long id2 = createTodo("Task B");
+        createTodo("Task C");
+
+        mockMvc.perform(put("/api/todos/bulk/mark-complete")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[" + id1 + "," + id2 + "]"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.updatedCount").value(2));
+    }
+
+    @Test
+    void bulkMarkComplete_noToken_returnsForbidden() throws Exception {
+        mockMvc.perform(put("/api/todos/bulk/mark-complete")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[1,2]"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void bulkDelete_deletesOnlySpecifiedTodos() throws Exception {
+        long id1 = createTodo("Keep me");
+        long id2 = createTodo("Delete me");
+
+        mockMvc.perform(delete("/api/todos/bulk")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[" + id2 + "]"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deletedCount").value(1));
+
+        mockMvc.perform(get("/api/todos/" + id1)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/todos/" + id2)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void bulkDelete_noToken_returnsForbidden() throws Exception {
+        mockMvc.perform(delete("/api/todos/bulk")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[1]"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void bulkOperations_onlyAffectOwnTodos() throws Exception {
+        long id = createTodo("User A task");
+        String otherToken = registerAndGetToken("bulkuser", "password123");
+
+        mockMvc.perform(put("/api/todos/bulk/mark-complete")
+                        .header("Authorization", "Bearer " + otherToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("[" + id + "]"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.updatedCount").value(0));
+    }
+
     // ── Ownership isolation ──────────────────────────────────────────────────
 
     @Test

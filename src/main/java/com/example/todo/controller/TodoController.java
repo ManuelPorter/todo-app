@@ -9,8 +9,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -107,5 +109,32 @@ public class TodoController {
         }
         repo.deleteById(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/bulk/mark-complete")
+    public ResponseEntity<Map<String, Integer>> markComplete(
+            @RequestBody List<Long> ids,
+            @AuthenticationPrincipal UserDetails principal) {
+        if (ids == null || ids.isEmpty()) return ResponseEntity.ok(Map.of("updatedCount", 0));
+        Long userId = resolveUserId(principal);
+        List<Todo> toUpdate = repo.findAllById(ids).stream()
+                .filter(t -> userId.equals(t.getUserId()) && !t.isCompleted())
+                .collect(Collectors.toList());
+        toUpdate.forEach(t -> t.setCompleted(true));
+        repo.saveAll(toUpdate);
+        return ResponseEntity.ok(Map.of("updatedCount", toUpdate.size()));
+    }
+
+    @DeleteMapping("/bulk")
+    public ResponseEntity<Map<String, Integer>> bulkDelete(
+            @RequestBody List<Long> ids,
+            @AuthenticationPrincipal UserDetails principal) {
+        if (ids == null || ids.isEmpty()) return ResponseEntity.ok(Map.of("deletedCount", 0));
+        Long userId = resolveUserId(principal);
+        List<Todo> toDelete = repo.findAllById(ids).stream()
+                .filter(t -> userId.equals(t.getUserId()))
+                .collect(Collectors.toList());
+        repo.deleteAll(toDelete);
+        return ResponseEntity.ok(Map.of("deletedCount", toDelete.size()));
     }
 }
