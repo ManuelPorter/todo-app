@@ -160,6 +160,7 @@ public class TodoController {
         existing.setCompleted(input.isCompleted());
         existing.setDueAt(input.getDueAt());
         existing.setPriority(input.getPriority() != null ? input.getPriority() : existing.getPriority());
+        existing.setRecurrenceRule(input.getRecurrenceRule());
         if (input.getTagIds() != null) {
             existing.setTags(resolveTagsForUser(input.getTagIds(), userId));
         }

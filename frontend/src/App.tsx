@@ -14,6 +14,20 @@ type Subtask = {
   completed: boolean
 }
 
+type RecurrenceRule = 'DAILY' | 'WEEKLY_MON' | 'WEEKLY_TUE' | 'WEEKLY_WED' | 'WEEKLY_THU' | 'WEEKLY_FRI' | 'WEEKLY_SAT' | 'WEEKLY_SUN' | 'MONTHLY'
+
+const RECURRENCE_LABELS: Record<RecurrenceRule, string> = {
+  DAILY: 'Daily',
+  WEEKLY_MON: 'Every Monday',
+  WEEKLY_TUE: 'Every Tuesday',
+  WEEKLY_WED: 'Every Wednesday',
+  WEEKLY_THU: 'Every Thursday',
+  WEEKLY_FRI: 'Every Friday',
+  WEEKLY_SAT: 'Every Saturday',
+  WEEKLY_SUN: 'Every Sunday',
+  MONTHLY: 'Monthly',
+}
+
 type Todo = {
   id: number
   title: string
@@ -25,6 +39,7 @@ type Todo = {
   deletedAt?: string
   tags?: Tag[]
   parentId?: number
+  recurrenceRule?: RecurrenceRule
 }
 
 type AuthState = {
@@ -159,11 +174,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set())
+  const [newRecurrence, setNewRecurrence] = useState<RecurrenceRule | ''>('')
+
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [editDue, setEditDue] = useState('')
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
+  const [editRecurrence, setEditRecurrence] = useState<RecurrenceRule | ''>('')
 
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null)
@@ -280,6 +298,7 @@ export default function App() {
     if (!title) return
     const payload: any = { title, description: desc, priority, tagIds: newTodoTagIds }
     if (due) payload.dueAt = due
+    if (newRecurrence) payload.recurrenceRule = newRecurrence
     try {
       const res = await fetch('/api/todos', {
         method: 'POST',
@@ -288,7 +307,7 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
-      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM'); setNewTodoTagIds([])
+      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM'); setNewTodoTagIds([]); setNewRecurrence('')
       setError(null)
       load(true)
     } catch (err) {
@@ -384,6 +403,7 @@ export default function App() {
     setEditDue(t.dueAt ? t.dueAt.slice(0, 16) : '')
     setEditPriority(t.priority ?? 'MEDIUM')
     setEditTagIds(t.tags?.map(tag => tag.id) ?? [])
+    setEditRecurrence(t.recurrenceRule ?? '')
   }
 
   function cancelEdit() {
@@ -398,6 +418,7 @@ export default function App() {
       completed: todos.find(t => t.id === id)?.completed ?? false,
       priority: editPriority,
       tagIds: editTagIds,
+      recurrenceRule: editRecurrence || null,
     }
     if (editDue) payload.dueAt = editDue
     try {
@@ -639,8 +660,8 @@ export default function App() {
   const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
 
   return (
-    <div className="p-6 max-w-3xl mx-auto text-gray-900 dark:text-gray-100">
-      <div className="flex items-center justify-between mb-4">
+    <div className="p-4 sm:p-6 max-w-3xl mx-auto text-gray-900 dark:text-gray-100">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h1 className="text-2xl font-bold">Todo App</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-600 dark:text-gray-400">Logged in as <strong>{auth.username}</strong></span>
@@ -831,9 +852,9 @@ export default function App() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex flex-wrap items-center gap-2 mb-4">
             <input
-              className="flex-1 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+              className="flex-1 min-w-[8rem] p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
               value={query}
               onChange={e => { setQuery(e.target.value); setDayPage(0) }}
               placeholder="Search..."
@@ -859,9 +880,9 @@ export default function App() {
           </div>
 
           <form onSubmit={create} className="mb-4">
-            <div className="flex gap-2 items-center mb-2">
-              <input className="flex-1 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
-              <input className="w-48 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
+            <div className="flex flex-wrap gap-2 items-center mb-2">
+              <input className="flex-1 min-w-[8rem] p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
+              <input className="flex-1 min-w-[8rem] p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
               <input type="datetime-local" className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white" value={due} onChange={e => setDue(e.target.value)} />
               <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
                 <option value="LOW">Low</option>
@@ -869,7 +890,13 @@ export default function App() {
                 <option value="HIGH">High</option>
                 <option value="URGENT">Urgent</option>
               </select>
-              <button className="bg-blue-600 text-white px-3 py-2 rounded">Add</button>
+              <select value={newRecurrence} onChange={e => setNewRecurrence(e.target.value as RecurrenceRule | '')} className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm">
+                <option value="">No repeat</option>
+                {(Object.keys(RECURRENCE_LABELS) as RecurrenceRule[]).map(r => (
+                  <option key={r} value={r}>{RECURRENCE_LABELS[r]}</option>
+                ))}
+              </select>
+              <button className="bg-blue-600 text-white px-3 py-2 rounded shrink-0">Add</button>
             </div>
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 items-center">
@@ -893,25 +920,6 @@ export default function App() {
             )}
           </form>
 
-          {todos.length > 0 && (
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => bulkMarkComplete(displayTodos.filter(t => !t.completed).map(t => t.id))}
-                className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-                disabled={displayTodos.every(t => t.completed)}
-              >
-                Mark all complete
-              </button>
-              <button
-                onClick={() => bulkDelete(displayTodos.filter(t => t.completed).map(t => t.id))}
-                className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                disabled={displayTodos.every(t => !t.completed)}
-              >
-                Move completed to trash
-              </button>
-            </div>
-          )}
-
           <div className="space-y-6">
             {loading && <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">Loading...</div>}
             {!loading && displayTodos.length === 0 && !error && (
@@ -921,11 +929,11 @@ export default function App() {
             )}
             {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
               <div key={key}>
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
                   <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'}`}>
                     {label}
                   </span>
-                  <div className={`flex-1 h-px ${overdue ? 'bg-red-200 dark:bg-red-900/50' : 'bg-gray-200 dark:bg-gray-700'}`} />
+                  <div className={`flex-1 min-w-[2rem] h-px ${overdue ? 'bg-red-200 dark:bg-red-900/50' : 'bg-gray-200 dark:bg-gray-700'}`} />
                   <button
                     onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
                     disabled={items.every(t => t.completed)}
@@ -971,6 +979,12 @@ export default function App() {
                             <option value="HIGH">High</option>
                             <option value="URGENT">Urgent</option>
                           </select>
+                          <select value={editRecurrence} onChange={e => setEditRecurrence(e.target.value as RecurrenceRule | '')} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="">No repeat</option>
+                            {(Object.keys(RECURRENCE_LABELS) as RecurrenceRule[]).map(r => (
+                              <option key={r} value={r}>{RECURRENCE_LABELS[r]}</option>
+                            ))}
+                          </select>
                           {tags.length > 0 && (
                             <div>
                               <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Labels</div>
@@ -1000,14 +1014,19 @@ export default function App() {
                         </div>
                       ) : (
                         <>
-                          <div className="flex items-start gap-3">
-                            <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} />
-                            <div className="flex-1">
+                          <div className="flex items-start gap-3 flex-wrap">
+                            <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} className="mt-1 shrink-0" />
+                            <div className="flex-1 min-w-0">
                               <div className="font-semibold flex items-center gap-2 flex-wrap">
                                 {t.title}
                                 <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
                                   {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
                                 </span>
+                                {t.recurrenceRule && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                                    ↻ {RECURRENCE_LABELS[t.recurrenceRule]}
+                                  </span>
+                                )}
                                 {t.dueAt ? <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">{formatDueTime(t.dueAt)}</span> : null}
                               </div>
                               {t.description && <div className="text-sm text-gray-600 dark:text-gray-400">{t.description}</div>}

@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import com.example.todo.model.RecurrenceRule;
 
 @Entity
 @Table(name = "todos")
@@ -35,6 +36,9 @@ public class Todo {
 
     @Column(name = "parent_id")
     private Long parentId;
+
+    @Enumerated(EnumType.STRING)
+    private RecurrenceRule recurrenceRule;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
@@ -95,4 +99,7 @@ public class Todo {
 
     public Long getParentId() { return parentId; }
     public void setParentId(Long parentId) { this.parentId = parentId; }
+
+    public RecurrenceRule getRecurrenceRule() { return recurrenceRule; }
+    public void setRecurrenceRule(RecurrenceRule recurrenceRule) { this.recurrenceRule = recurrenceRule; }
 }
