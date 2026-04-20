@@ -3,4 +3,4 @@
 @tailwind utilities;
 
 html,body,#root{height:100%}
-body{background:#f3f4f6}
+body { @apply bg-gray-100 dark:bg-gray-900 transition-colors duration-200; }
