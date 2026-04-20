@@ -45,7 +45,7 @@ function getStoredAuth(): AuthState | null {
   }
 }
 
-function AuthPage({ onAuth }: { onAuth: (auth: AuthState) => void }) {
+function AuthPage({ onAuth, dark, onToggleDark }: { onAuth: (auth: AuthState) => void; dark: boolean; onToggleDark: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -79,34 +79,43 @@ function AuthPage({ onAuth }: { onAuth: (auth: AuthState) => void }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white p-8 rounded shadow w-full max-w-sm">
-        <h1 className="text-2xl font-bold mb-6 text-center">Todo App</h1>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <div className="bg-white dark:bg-gray-800 p-8 rounded shadow w-full max-w-sm">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Todo App</h1>
+          <button
+            onClick={onToggleDark}
+            className="p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {dark ? '☀️' : '🌙'}
+          </button>
+        </div>
 
-        <div className="flex mb-6 border rounded overflow-hidden">
+        <div className="flex mb-6 border dark:border-gray-600 rounded overflow-hidden">
           <button
             onClick={() => { setMode('login'); setError(null) }}
-            className={`flex-1 py-2 text-sm font-medium ${mode === 'login' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'}`}
+            className={`flex-1 py-2 text-sm font-medium ${mode === 'login' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`}
           >
             Login
           </button>
           <button
             onClick={() => { setMode('register'); setError(null) }}
-            className={`flex-1 py-2 text-sm font-medium ${mode === 'register' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'}`}
+            className={`flex-1 py-2 text-sm font-medium ${mode === 'register' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`}
           >
             Register
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-800 rounded text-sm">
+          <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 rounded text-sm">
             {error}
           </div>
         )}
 
         <form onSubmit={submit} className="flex flex-col gap-3">
           <input
-            className="p-2 border rounded"
+            className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
             placeholder="Username"
             value={username}
             onChange={e => setUsername(e.target.value)}
@@ -114,7 +123,7 @@ function AuthPage({ onAuth }: { onAuth: (auth: AuthState) => void }) {
           />
           <input
             type="password"
-            className="p-2 border rounded"
+            className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
             placeholder="Password"
             value={password}
             onChange={e => setPassword(e.target.value)}
@@ -169,6 +178,12 @@ export default function App() {
   const [addingSubtaskId, setAddingSubtaskId] = useState<number | null>(null)
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
 
+  const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark')
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark)
+    localStorage.setItem('theme', dark ? 'dark' : 'light')
+  }, [dark])
+
   useEffect(() => { if (auth) load() }, [query, auth])
   useEffect(() => { if (auth && view === 'trash') loadTrash() }, [view, auth])
   useEffect(() => { if (auth) loadTags() }, [auth])
@@ -195,8 +210,21 @@ export default function App() {
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to load todos (${res.status})`)
       const data = await res.json()
-      setTodos(data.content || [])
+      const todoList: Todo[] = data.content || []
+      setTodos(todoList)
       setError(null)
+      const subtaskResults = await Promise.all(
+        todoList.map(async t => {
+          const r = await fetch(`/api/todos/${t.id}/subtasks`, { headers: authHeaders() })
+          const subtasks: Subtask[] = r.ok ? await r.json() : []
+          return { id: t.id, subtasks }
+        })
+      )
+      setSubtasksMap(prev => {
+        const next = { ...prev }
+        for (const { id, subtasks } of subtaskResults) next[id] = subtasks
+        return next
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load todos')
     } finally {
@@ -269,10 +297,10 @@ export default function App() {
   }
 
   const priorityBadge: Record<Priority, { label: string; className: string }> = {
-    LOW:    { label: 'Low',    className: 'bg-gray-100 text-gray-600' },
-    MEDIUM: { label: 'Medium', className: 'bg-blue-100 text-blue-700' },
-    HIGH:   { label: 'High',   className: 'bg-orange-100 text-orange-700' },
-    URGENT: { label: 'Urgent', className: 'bg-red-100 text-red-700 font-semibold' },
+    LOW:    { label: 'Low',    className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
+    MEDIUM: { label: 'Medium', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+    HIGH:   { label: 'High',   className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' },
+    URGENT: { label: 'Urgent', className: 'bg-red-100 text-red-700 font-semibold dark:bg-red-900/30 dark:text-red-400' },
   }
 
   function formatDueTime(dueAt?: string) {
@@ -590,7 +618,7 @@ export default function App() {
         case 'dueAt':
           cmp = (a.dueAt ?? '').localeCompare(b.dueAt ?? '')
           break
-        default: // createdAt
+        default:
           cmp = (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
       }
       return sortDir === 'desc' ? -cmp : cmp
@@ -598,7 +626,7 @@ export default function App() {
   }
 
   if (!auth) {
-    return <AuthPage onAuth={setAuth} />
+    return <AuthPage onAuth={setAuth} dark={dark} onToggleDark={() => setDark(d => !d)} />
   }
 
   const filteredTodos = selectedTagId
@@ -611,44 +639,51 @@ export default function App() {
   const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-3xl mx-auto text-gray-900 dark:text-gray-100">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Todo App</h1>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-600">Logged in as <strong>{auth.username}</strong></span>
-          <button onClick={logout} className="text-sm text-red-600 hover:underline">Logout</button>
+          <span className="text-sm text-gray-600 dark:text-gray-400">Logged in as <strong>{auth.username}</strong></span>
+          <button
+            onClick={() => setDark(d => !d)}
+            className="p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {dark ? '☀️' : '🌙'}
+          </button>
+          <button onClick={logout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Logout</button>
         </div>
       </div>
 
-      <div className="flex gap-1 mb-4 border-b">
+      <div className="flex gap-1 mb-4 border-b dark:border-gray-700">
         <button
           onClick={() => setView('todos')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${view === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${view === 'todos' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
         >
           Todos
         </button>
         <button
           onClick={() => setView('trash')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'trash' ? 'border-red-500 text-red-500' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'trash' ? 'border-red-500 text-red-500' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
         >
           Trash
           {trashItems.length > 0 && (
-            <span className="text-xs bg-red-100 text-red-600 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
+            <span className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
           )}
         </button>
       </div>
 
       {error && (
-        <div className="flex items-center justify-between mb-4 p-3 bg-red-100 border border-red-300 text-red-800 rounded">
+        <div className="flex items-center justify-between mb-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 rounded">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="ml-4 font-bold text-red-600">✕</button>
+          <button onClick={() => setError(null)} className="ml-4 font-bold text-red-600 dark:text-red-400">✕</button>
         </div>
       )}
 
       {view === 'trash' ? (
         <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-gray-500">{trashItems.length} item{trashItems.length !== 1 ? 's' : ''} in trash</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">{trashItems.length} item{trashItems.length !== 1 ? 's' : ''} in trash</span>
             <div className="flex gap-2">
               {trashItems.length > 0 && (
                 <>
@@ -669,22 +704,22 @@ export default function App() {
             </div>
           </div>
 
-          {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
+          {loading && <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">Loading...</div>}
           {!loading && trashItems.length === 0 && (
-            <div className="text-sm text-gray-500 text-center py-8">Trash is empty.</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">Trash is empty.</div>
           )}
 
           <div className="space-y-3">
             {trashItems.map(t => (
-              <div key={t.id} className="p-3 bg-white rounded shadow opacity-75 flex items-start gap-3">
+              <div key={t.id} className="p-3 bg-white dark:bg-gray-800 rounded shadow opacity-75 flex items-start gap-3">
                 <div className="flex-1">
-                  <div className="font-semibold flex items-center gap-2 line-through text-gray-400">
+                  <div className="font-semibold flex items-center gap-2 line-through text-gray-400 dark:text-gray-500">
                     {t.title}
                     <span className={`text-xs px-1.5 py-0.5 rounded no-underline ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
                       {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
                     </span>
                   </div>
-                  {t.description && <div className="text-sm text-gray-400 line-through">{t.description}</div>}
+                  {t.description && <div className="text-sm text-gray-400 dark:text-gray-500 line-through">{t.description}</div>}
                   {t.tags && t.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1">
                       {t.tags.map(tag => (
@@ -695,7 +730,7 @@ export default function App() {
                     </div>
                   )}
                   {t.deletedAt && (
-                    <div className="text-xs text-gray-400 mt-1">
+                    <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                       Deleted {new Date(t.deletedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
                   )}
@@ -703,14 +738,14 @@ export default function App() {
                 <button
                   onClick={() => restore(t.id)}
                   disabled={pendingIds.has(t.id)}
-                  className="text-green-600 text-sm disabled:opacity-50"
+                  className="text-green-600 dark:text-green-400 text-sm disabled:opacity-50"
                 >
                   Restore
                 </button>
                 <button
                   onClick={() => permanentDelete(t.id)}
                   disabled={pendingIds.has(t.id)}
-                  className="text-red-600 text-sm disabled:opacity-50"
+                  className="text-red-600 dark:text-red-400 text-sm disabled:opacity-50"
                 >
                   Delete forever
                 </button>
@@ -725,7 +760,7 @@ export default function App() {
             {tags.length > 0 && (
               <button
                 onClick={() => { setSelectedTagId(null); setDayPage(0) }}
-                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${selectedTagId === null ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${selectedTagId === null ? 'bg-gray-700 dark:bg-gray-500 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
               >
                 All
               </button>
@@ -735,14 +770,14 @@ export default function App() {
                 key={tag.id}
                 onClick={() => { setSelectedTagId(selectedTagId === tag.id ? null : tag.id); setDayPage(0) }}
                 style={{ backgroundColor: tag.color }}
-                className={`text-xs px-2.5 py-1 rounded-full text-white transition-opacity ${selectedTagId === tag.id ? 'ring-2 ring-offset-1 ring-gray-400' : 'opacity-75 hover:opacity-100'}`}
+                className={`text-xs px-2.5 py-1 rounded-full text-white transition-opacity ${selectedTagId === tag.id ? 'ring-2 ring-offset-1 ring-gray-400 dark:ring-offset-gray-900' : 'opacity-75 hover:opacity-100'}`}
               >
                 {tag.name}
               </button>
             ))}
             <button
               onClick={() => setShowTagPanel(p => !p)}
-              className="text-xs px-2.5 py-1 rounded-full border border-dashed border-gray-400 text-gray-500 hover:bg-gray-50 transition-colors"
+              className="text-xs px-2.5 py-1 rounded-full border border-dashed border-gray-400 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >
               {showTagPanel ? '✕ Close' : '+ Label'}
             </button>
@@ -750,9 +785,9 @@ export default function App() {
 
           {/* Tag management panel */}
           {showTagPanel && (
-            <div className="mb-4 p-3 bg-gray-50 rounded border">
+            <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {tags.length === 0 && <span className="text-xs text-gray-400">No labels yet. Create one below.</span>}
+                {tags.length === 0 && <span className="text-xs text-gray-400 dark:text-gray-500">No labels yet. Create one below.</span>}
                 {tags.map(tag => (
                   <span key={tag.id} style={{ backgroundColor: tag.color }} className="flex items-center gap-1 text-xs px-2 py-1 rounded-full text-white">
                     {tag.name}
@@ -768,7 +803,7 @@ export default function App() {
               </div>
               <div className="flex gap-2 items-center">
                 <input
-                  className="p-1.5 border rounded text-sm flex-1"
+                  className="p-1.5 border dark:border-gray-600 rounded text-sm flex-1 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
                   value={newTagName}
                   onChange={e => setNewTagName(e.target.value)}
                   placeholder="Label name"
@@ -781,7 +816,7 @@ export default function App() {
                       type="button"
                       onClick={() => setNewTagColor(c)}
                       style={{ backgroundColor: c }}
-                      className={`w-5 h-5 rounded-full transition-transform ${newTagColor === c ? 'ring-2 ring-offset-1 ring-gray-500 scale-110' : 'hover:scale-110'}`}
+                      className={`w-5 h-5 rounded-full transition-transform ${newTagColor === c ? 'ring-2 ring-offset-1 ring-gray-500 dark:ring-offset-gray-800 scale-110' : 'hover:scale-110'}`}
                     />
                   ))}
                 </div>
@@ -798,7 +833,7 @@ export default function App() {
 
           <div className="flex items-center gap-2 mb-4">
             <input
-              className="flex-1 p-2 border rounded"
+              className="flex-1 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
               value={query}
               onChange={e => { setQuery(e.target.value); setDayPage(0) }}
               placeholder="Search..."
@@ -806,7 +841,7 @@ export default function App() {
             <select
               value={sortField}
               onChange={e => { setSortField(e.target.value); setDayPage(0) }}
-              className="p-2 border rounded text-sm"
+              className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
             >
               <option value="createdAt">Date created</option>
               <option value="dueAt">Due time</option>
@@ -816,7 +851,7 @@ export default function App() {
             </select>
             <button
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className="p-2 border rounded text-sm hover:bg-gray-100"
+              className="p-2 border dark:border-gray-600 rounded text-sm hover:bg-gray-100 dark:hover:bg-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
               title={sortDir === 'desc' ? 'Descending — click to switch' : 'Ascending — click to switch'}
             >
               {sortDir === 'desc' ? '↓' : '↑'}
@@ -825,10 +860,10 @@ export default function App() {
 
           <form onSubmit={create} className="mb-4">
             <div className="flex gap-2 items-center mb-2">
-              <input className="flex-1 p-2 border rounded" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
-              <input className="w-48 p-2 border rounded" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
-              <input type="datetime-local" className="p-2 border rounded" value={due} onChange={e => setDue(e.target.value)} />
-              <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border rounded">
+              <input className="flex-1 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
+              <input className="w-48 p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
+              <input type="datetime-local" className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white" value={due} onChange={e => setDue(e.target.value)} />
+              <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>
                 <option value="HIGH">High</option>
@@ -838,7 +873,7 @@ export default function App() {
             </div>
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 items-center">
-                <span className="text-xs text-gray-500">Labels:</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">Labels:</span>
                 {tags.map(tag => (
                   <button
                     key={tag.id}
@@ -848,7 +883,7 @@ export default function App() {
                     className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
                       newTodoTagIds.includes(tag.id)
                         ? 'text-white border-transparent'
-                        : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                        : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                     }`}
                   >
                     {tag.name}
@@ -878,59 +913,59 @@ export default function App() {
           )}
 
           <div className="space-y-6">
-            {loading && <div className="text-sm text-gray-500 text-center py-4">Loading...</div>}
+            {loading && <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">Loading...</div>}
             {!loading && displayTodos.length === 0 && !error && (
-              <div className="text-sm text-gray-500 text-center py-4">
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
                 {selectedTagId ? 'No todos with this label.' : 'No todos found.'}
               </div>
             )}
             {!loading && visibleGroups.map(({ key, label, overdue, items }) => (
               <div key={key}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
+                  <span className={`text-xs font-semibold uppercase tracking-wide ${overdue ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'}`}>
                     {label}
                   </span>
-                  <div className={`flex-1 h-px ${overdue ? 'bg-red-200' : 'bg-gray-200'}`} />
+                  <div className={`flex-1 h-px ${overdue ? 'bg-red-200 dark:bg-red-900/50' : 'bg-gray-200 dark:bg-gray-700'}`} />
                   <button
                     onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
                     disabled={items.every(t => t.completed)}
-                    className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700 hover:bg-green-200 disabled:opacity-40"
+                    className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-40"
                   >
                     Mark complete
                   </button>
                   <button
                     onClick={() => bulkDelete(items.filter(t => t.completed).map(t => t.id))}
                     disabled={items.every(t => !t.completed)}
-                    className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-40"
+                    className="text-xs px-2 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 disabled:opacity-40"
                   >
                     Trash completed
                   </button>
                 </div>
                 <div className="space-y-3">
                   {items.map(t => (
-                    <div key={t.id} className={`p-3 bg-white rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
+                    <div key={t.id} className={`p-3 bg-white dark:bg-gray-800 rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
                       {editingId === t.id ? (
                         <div className="flex flex-col gap-2">
                           <input
-                            className="p-2 border rounded text-sm"
+                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
                             value={editTitle}
                             onChange={e => setEditTitle(e.target.value)}
                             placeholder="Title"
                             autoFocus
                           />
                           <input
-                            className="p-2 border rounded text-sm"
+                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
                             value={editDesc}
                             onChange={e => setEditDesc(e.target.value)}
                             placeholder="Description"
                           />
                           <input
                             type="datetime-local"
-                            className="p-2 border rounded text-sm"
+                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                             value={editDue}
                             onChange={e => setEditDue(e.target.value)}
                           />
-                          <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border rounded text-sm">
+                          <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             <option value="LOW">Low</option>
                             <option value="MEDIUM">Medium</option>
                             <option value="HIGH">High</option>
@@ -938,7 +973,7 @@ export default function App() {
                           </select>
                           {tags.length > 0 && (
                             <div>
-                              <div className="text-xs text-gray-500 mb-1">Labels</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Labels</div>
                               <div className="flex flex-wrap gap-1.5">
                                 {tags.map(tag => (
                                   <button
@@ -949,7 +984,7 @@ export default function App() {
                                     className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
                                       editTagIds.includes(tag.id)
                                         ? 'text-white border-transparent'
-                                        : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+                                        : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
                                     }`}
                                   >
                                     {tag.name}
@@ -959,7 +994,7 @@ export default function App() {
                             </div>
                           )}
                           <div className="flex gap-2 justify-end">
-                            <button onClick={cancelEdit} className="px-3 py-1 border rounded text-sm">Cancel</button>
+                            <button onClick={cancelEdit} className="px-3 py-1 border dark:border-gray-600 rounded text-sm dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
                             <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
                           </div>
                         </div>
@@ -973,9 +1008,9 @@ export default function App() {
                                 <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
                                   {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
                                 </span>
-                                {t.dueAt ? <span className="text-sm text-gray-500 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                                {t.dueAt ? <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">{formatDueTime(t.dueAt)}</span> : null}
                               </div>
-                              {t.description && <div className="text-sm text-gray-600">{t.description}</div>}
+                              {t.description && <div className="text-sm text-gray-600 dark:text-gray-400">{t.description}</div>}
                               {t.tags && t.tags.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1.5">
                                   {t.tags.map(tag => (
@@ -990,14 +1025,14 @@ export default function App() {
                                 </div>
                               )}
                             </div>
-                            <button onClick={() => startEdit(t)} className="text-blue-600 text-sm">Edit</button>
-                            <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 text-sm disabled:opacity-50">Trash</button>
+                            <button onClick={() => startEdit(t)} className="text-blue-600 dark:text-blue-400 text-sm">Edit</button>
+                            <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 dark:text-red-400 text-sm disabled:opacity-50">Trash</button>
                           </div>
                           {/* Subtasks */}
                           <div className="mt-2 ml-6">
                             <button
                               onClick={() => toggleExpand(t.id)}
-                              className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center gap-1"
                             >
                               <span>{expandedTodos.has(t.id) ? '▼' : '▶'}</span>
                               <span>
@@ -1017,12 +1052,12 @@ export default function App() {
                                       onChange={e => toggleSubtask(t.id, s.id, e.target.checked)}
                                       className="mt-px"
                                     />
-                                    <span className={`text-sm flex-1 ${s.completed ? 'line-through text-gray-400' : ''}`}>
+                                    <span className={`text-sm flex-1 ${s.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
                                       {s.title}
                                     </span>
                                     <button
                                       onClick={() => deleteSubtask(t.id, s.id)}
-                                      className="text-red-400 hover:text-red-600 text-xs leading-none"
+                                      className="text-red-400 hover:text-red-600 dark:hover:text-red-300 text-xs leading-none"
                                       title="Remove subtask"
                                     >
                                       ×
@@ -1032,7 +1067,7 @@ export default function App() {
                                 {addingSubtaskId === t.id ? (
                                   <div className="flex gap-1 mt-1">
                                     <input
-                                      className="flex-1 text-sm p-1 border rounded"
+                                      className="flex-1 text-sm p-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
                                       value={newSubtaskTitle}
                                       onChange={e => setNewSubtaskTitle(e.target.value)}
                                       onKeyDown={e => { if (e.key === 'Enter') createSubtask(t.id); if (e.key === 'Escape') { setAddingSubtaskId(null); setNewSubtaskTitle('') } }}
@@ -1040,12 +1075,12 @@ export default function App() {
                                       autoFocus
                                     />
                                     <button onClick={() => createSubtask(t.id)} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
-                                    <button onClick={() => { setAddingSubtaskId(null); setNewSubtaskTitle('') }} className="text-xs px-2 py-1 border rounded hover:bg-gray-50">✕</button>
+                                    <button onClick={() => { setAddingSubtaskId(null); setNewSubtaskTitle('') }} className="text-xs px-2 py-1 border dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">✕</button>
                                   </div>
                                 ) : (
                                   <button
                                     onClick={() => { setAddingSubtaskId(t.id); setNewSubtaskTitle('') }}
-                                    className="text-xs text-blue-500 hover:underline mt-0.5"
+                                    className="text-xs text-blue-500 dark:text-blue-400 hover:underline mt-0.5"
                                   >
                                     + Add subtask
                                   </button>
@@ -1064,10 +1099,10 @@ export default function App() {
 
           {totalDayPages > 1 && (
             <div className="flex items-center justify-between mt-4">
-              <div className="text-sm text-gray-600">Page {dayPage + 1} of {totalDayPages}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Page {dayPage + 1} of {totalDayPages}</div>
               <div className="flex gap-2">
-                <button disabled={dayPage <= 0} onClick={() => setDayPage(p => p - 1)} className="px-3 py-1 border rounded disabled:opacity-50">Prev</button>
-                <button disabled={dayPage + 1 >= totalDayPages} onClick={() => setDayPage(p => p + 1)} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
+                <button disabled={dayPage <= 0} onClick={() => setDayPage(p => p - 1)} className="px-3 py-1 border dark:border-gray-600 rounded disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Prev</button>
+                <button disabled={dayPage + 1 >= totalDayPages} onClick={() => setDayPage(p => p + 1)} className="px-3 py-1 border dark:border-gray-600 rounded disabled:opacity-50 hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">Next</button>
               </div>
             </div>
           )}
