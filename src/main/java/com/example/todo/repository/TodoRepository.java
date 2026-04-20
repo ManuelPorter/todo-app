@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
@@ -30,4 +31,7 @@ public interface TodoRepository extends JpaRepository<Todo, Long> {
     @Transactional
     @Query("DELETE FROM Todo t WHERE t.userId = :userId AND t.deletedAt IS NOT NULL")
     void deleteAllTrashedByUserId(Long userId);
+
+    @Query("SELECT t FROM Todo t WHERE t.recurrenceRule IS NOT NULL AND t.dueAt IS NOT NULL AND t.dueAt <= :now AND t.deletedAt IS NULL")
+    List<Todo> findOverdueRecurring(@Param("now") LocalDateTime now);
 }
