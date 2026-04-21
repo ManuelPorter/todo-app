@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 
@@ -50,6 +50,49 @@ type AuthState = {
 const TAG_COLORS = ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#8B5CF6', '#EC4899', '#6B7280']
 
 const PRIORITY_ORDER: Record<Priority, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, URGENT: 4 }
+
+function useNotifications(todos: Todo[]) {
+  const notifiedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    try {
+      const stored: string[] = JSON.parse(localStorage.getItem('todo-notified') ?? '[]')
+      notifiedRef.current = new Set(stored)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+
+    function check() {
+      const now = Date.now()
+      for (const todo of todos) {
+        if (!todo.dueAt || todo.completed) continue
+        const due = new Date(todo.dueAt).getTime()
+        const diff = due - now
+
+        const key30 = `${todo.id}_30`
+        if (diff > 0 && diff <= 30 * 60_000 && !notifiedRef.current.has(key30)) {
+          const mins = Math.round(diff / 60_000)
+          new Notification(`Due soon: ${todo.title}`, { body: `Due in ${mins} minute${mins !== 1 ? 's' : ''}` })
+          notifiedRef.current.add(key30)
+          localStorage.setItem('todo-notified', JSON.stringify([...notifiedRef.current]))
+        }
+
+        const keyDue = `${todo.id}_due`
+        if (diff <= 0 && diff > -10 * 60_000 && !notifiedRef.current.has(keyDue)) {
+          new Notification(`Due now: ${todo.title}`, { body: 'This task is due!' })
+          notifiedRef.current.add(keyDue)
+          localStorage.setItem('todo-notified', JSON.stringify([...notifiedRef.current]))
+        }
+      }
+    }
+
+    check()
+    const id = setInterval(check, 60_000)
+    return () => clearInterval(id)
+  }, [todos])
+}
 
 function getStoredAuth(): AuthState | null {
   try {
@@ -197,6 +240,9 @@ export default function App() {
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('')
 
   const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark')
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  )
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
     localStorage.setItem('theme', dark ? 'dark' : 'light')
@@ -205,6 +251,14 @@ export default function App() {
   useEffect(() => { if (auth) load() }, [query, auth])
   useEffect(() => { if (auth && view === 'trash') loadTrash() }, [view, auth])
   useEffect(() => { if (auth) loadTags() }, [auth])
+
+  useNotifications(todos)
+
+  async function requestNotifPermission() {
+    if (typeof Notification === 'undefined') return
+    const result = await Notification.requestPermission()
+    setNotifPermission(result)
+  }
 
   function authHeaders(): HeadersInit {
     return auth ? { Authorization: `Bearer ${auth.token}` } : {}
@@ -672,6 +726,19 @@ export default function App() {
           >
             {dark ? '☀️' : '🌙'}
           </button>
+          {notifPermission !== 'unsupported' && (
+            <button
+              onClick={notifPermission === 'default' ? requestNotifPermission : undefined}
+              className="p-1.5 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:cursor-default"
+              title={
+                notifPermission === 'granted' ? 'Notifications enabled' :
+                notifPermission === 'denied' ? 'Notifications blocked — enable in browser settings' :
+                'Enable notifications for due date reminders'
+              }
+            >
+              {notifPermission === 'denied' ? '🔕' : '🔔'}
+            </button>
+          )}
           <button onClick={logout} className="text-sm text-red-600 dark:text-red-400 hover:underline">Logout</button>
         </div>
       </div>
