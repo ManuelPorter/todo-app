@@ -158,6 +158,7 @@ public class TodoController {
         existing.setTitle(input.getTitle());
         existing.setDescription(input.getDescription());
         existing.setCompleted(input.isCompleted());
+        existing.setStartAt(input.getStartAt());
         existing.setDueAt(input.getDueAt());
         existing.setPriority(input.getPriority() != null ? input.getPriority() : existing.getPriority());
         existing.setRecurrenceRule(input.getRecurrenceRule());

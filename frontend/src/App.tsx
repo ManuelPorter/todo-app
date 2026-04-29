@@ -34,6 +34,7 @@ type Todo = {
   description?: string
   completed: boolean
   createdAt?: string
+  startAt?: string
   dueAt?: string
   priority: Priority
   deletedAt?: string
@@ -202,12 +203,16 @@ function AuthPage({ onAuth, dark, onToggleDark }: { onAuth: (auth: AuthState) =>
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(getStoredAuth)
-  const [view, setView] = useState<'todos' | 'trash'>('todos')
+  const [view, setView] = useState<'todos' | 'trash' | 'calendar'>('todos')
+  const [calendarDate, setCalendarDate] = useState(() => { const d = new Date(); d.setDate(1); return d })
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [todos, setTodos] = useState<Todo[]>([])
   const [trashItems, setTrashItems] = useState<Todo[]>([])
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
-  const [due, setDue] = useState('')
+  const [todoDate, setTodoDate] = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
   const [priority, setPriority] = useState<Priority>('MEDIUM')
   const [query, setQuery] = useState('')
   const [sortField, setSortField] = useState('dueAt')
@@ -222,7 +227,9 @@ export default function App() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
-  const [editDue, setEditDue] = useState('')
+  const [editDate, setEditDate] = useState('')
+  const [editStartTime, setEditStartTime] = useState('')
+  const [editEndTime, setEditEndTime] = useState('')
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
   const [editRecurrence, setEditRecurrence] = useState<RecurrenceRule | ''>('')
 
@@ -351,7 +358,8 @@ export default function App() {
     e.preventDefault()
     if (!title) return
     const payload: any = { title, description: desc, priority, tagIds: newTodoTagIds }
-    if (due) payload.dueAt = due
+    if (todoDate && startTime) payload.startAt = `${todoDate}T${startTime}`
+    if (todoDate && endTime) payload.dueAt = `${todoDate}T${endTime}`
     if (newRecurrence) payload.recurrenceRule = newRecurrence
     try {
       const res = await fetch('/api/todos', {
@@ -361,7 +369,7 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
-      setTitle(''); setDesc(''); setDue(''); setPriority('MEDIUM'); setNewTodoTagIds([]); setNewRecurrence('')
+      setTitle(''); setDesc(''); setTodoDate(selectedDay || ''); setStartTime(''); setEndTime(''); setPriority('MEDIUM'); setNewTodoTagIds([]); setNewRecurrence('')
       setError(null)
       load(true)
     } catch (err) {
@@ -376,6 +384,13 @@ export default function App() {
     URGENT: { label: 'Urgent', className: 'bg-red-100 text-red-700 font-semibold dark:bg-red-900/30 dark:text-red-400' },
   }
 
+  const calendarChipClass: Record<Priority, string> = {
+    LOW:    'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300',
+    MEDIUM: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+    HIGH:   'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+    URGENT: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  }
+
   function formatDueTime(dueAt?: string) {
     if (!dueAt) return ''
     const d = new Date(dueAt)
@@ -383,9 +398,10 @@ export default function App() {
     return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   }
 
-  function dayKey(dueAt?: string): string {
-    if (!dueAt) return 'none'
-    const d = new Date(dueAt)
+  function dayKey(dueAt?: string, startAt?: string): string {
+    const ref = dueAt || startAt
+    if (!ref) return 'none'
+    const d = new Date(ref)
     if (Number.isNaN(d.getTime())) return 'none'
     return d.toLocaleDateString('en-CA')
   }
@@ -409,7 +425,7 @@ export default function App() {
   function groupedTodos(list: Todo[]): { key: string; label: string; overdue: boolean; items: Todo[] }[] {
     const map = new Map<string, Todo[]>()
     for (const t of list) {
-      const key = dayKey(t.dueAt)
+      const key = dayKey(t.dueAt, t.startAt)
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(t)
     }
@@ -423,6 +439,38 @@ export default function App() {
         const { text, overdue } = dayLabel(key)
         return { key, label: text, overdue, items }
       })
+  }
+
+  function getCalendarDays(monthStart: Date): { date: Date; isCurrentMonth: boolean; key: string }[] {
+    const year = monthStart.getFullYear()
+    const month = monthStart.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const start = new Date(firstDay)
+    start.setDate(firstDay.getDate() - firstDay.getDay())
+    const end = new Date(lastDay)
+    end.setDate(lastDay.getDate() + (6 - lastDay.getDay()))
+    const days: { date: Date; isCurrentMonth: boolean; key: string }[] = []
+    const cur = new Date(start)
+    while (cur <= end) {
+      days.push({ date: new Date(cur), isCurrentMonth: cur.getMonth() === month, key: cur.toLocaleDateString('en-CA') })
+      cur.setDate(cur.getDate() + 1)
+    }
+    return days
+  }
+
+  function todosForDay(list: Todo[], key: string): Todo[] {
+    return list.filter(t => dayKey(t.dueAt, t.startAt) === key)
+  }
+
+  function prevMonth() {
+    setCalendarDate(d => { const p = new Date(d); p.setMonth(d.getMonth() - 1); return p })
+    setSelectedDay(null)
+  }
+
+  function nextMonth() {
+    setCalendarDate(d => { const n = new Date(d); n.setMonth(d.getMonth() + 1); return n })
+    setSelectedDay(null)
   }
 
   async function toggle(id: number, checked: boolean) {
@@ -454,7 +502,9 @@ export default function App() {
     setEditingId(t.id)
     setEditTitle(t.title)
     setEditDesc(t.description ?? '')
-    setEditDue(t.dueAt ? t.dueAt.slice(0, 16) : '')
+    setEditDate(t.startAt?.slice(0, 10) || t.dueAt?.slice(0, 10) || '')
+    setEditStartTime(t.startAt ? t.startAt.slice(11, 16) : '')
+    setEditEndTime(t.dueAt ? t.dueAt.slice(11, 16) : '')
     setEditPriority(t.priority ?? 'MEDIUM')
     setEditTagIds(t.tags?.map(tag => tag.id) ?? [])
     setEditRecurrence(t.recurrenceRule ?? '')
@@ -474,7 +524,8 @@ export default function App() {
       tagIds: editTagIds,
       recurrenceRule: editRecurrence || null,
     }
-    if (editDue) payload.dueAt = editDue
+    if (editDate && editStartTime) payload.startAt = `${editDate}T${editStartTime}`
+    if (editDate && editEndTime) payload.dueAt = `${editDate}T${editEndTime}`
     try {
       const res = await fetch('/api/todos/' + id, {
         method: 'PUT',
@@ -709,6 +760,9 @@ export default function App() {
     : todos
 
   const displayTodos = sortTodos(filteredTodos)
+  const todayKey = new Date().toLocaleDateString('en-CA')
+  const calendarDays = getCalendarDays(calendarDate)
+  const monthLabel = calendarDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const allGroups = groupedTodos(displayTodos)
   const totalDayPages = Math.ceil(allGroups.length / DAYS_PER_PAGE)
   const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
@@ -758,6 +812,12 @@ export default function App() {
           {trashItems.length > 0 && (
             <span className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
           )}
+        </button>
+        <button
+          onClick={() => setView('calendar')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${view === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+        >
+          Calendar
         </button>
       </div>
 
@@ -840,6 +900,193 @@ export default function App() {
               </div>
             ))}
           </div>
+        </div>
+      ) : view === 'calendar' ? (
+        <div>
+          {/* Month navigator */}
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={prevMonth}
+              className="px-3 py-1.5 rounded-lg border dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-lg leading-none"
+            >
+              ‹
+            </button>
+            <span className="text-base font-semibold text-gray-800 dark:text-gray-100">{monthLabel}</span>
+            <button
+              onClick={nextMonth}
+              className="px-3 py-1.5 rounded-lg border dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 text-lg leading-none"
+            >
+              ›
+            </button>
+          </div>
+
+          {/* Weekday headers */}
+          <div className="grid grid-cols-7 mb-1">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+              <div key={d} className="text-xs font-medium text-center text-gray-400 dark:text-gray-500 py-1">{d}</div>
+            ))}
+          </div>
+
+          {/* Day grid */}
+          <div className="grid grid-cols-7 gap-px bg-gray-200 dark:bg-gray-700 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+            {calendarDays.map(day => {
+              const dayTodos = todosForDay(displayTodos, day.key)
+              const isToday = day.key === todayKey
+              const isSelected = day.key === selectedDay
+              return (
+                <div
+                  key={day.key}
+                  onClick={() => {
+                    const next = isSelected ? null : day.key
+                    setSelectedDay(next)
+                    if (next) setTodoDate(next)
+                  }}
+                  className={`min-h-[80px] p-1.5 cursor-pointer transition-colors
+                    ${day.isCurrentMonth ? 'bg-white dark:bg-gray-800' : 'bg-gray-50 dark:bg-gray-900/60'}
+                    ${isSelected ? 'ring-2 ring-inset ring-blue-500' : 'hover:bg-gray-50 dark:hover:bg-gray-700/60'}
+                  `}
+                >
+                  <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full
+                    ${isToday ? 'bg-blue-500 text-white' : day.isCurrentMonth ? 'text-gray-700 dark:text-gray-200' : 'text-gray-300 dark:text-gray-600'}
+                  `}>
+                    {day.date.getDate()}
+                  </div>
+                  <div className="space-y-0.5">
+                    {dayTodos.slice(0, 2).map(t => (
+                      <div
+                        key={t.id}
+                        className={`text-xs truncate px-1 py-0.5 rounded ${calendarChipClass[t.priority ?? 'MEDIUM']} ${t.completed ? 'opacity-50 line-through' : ''}`}
+                      >
+                        {t.startAt ? `${formatDueTime(t.startAt)} ` : ''}{t.title}
+                      </div>
+                    ))}
+                    {dayTodos.length > 2 && (
+                      <div className="text-xs text-gray-400 dark:text-gray-500 px-1">+{dayTodos.length - 2} more</div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Selected day panel */}
+          {selectedDay && (
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3 uppercase tracking-wide">
+                {dayLabel(selectedDay).text}
+              </h3>
+
+              {/* Quick-add form */}
+              <form onSubmit={create} className="mb-3 p-3 bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 shadow-sm flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="Add a task..."
+                  />
+                  <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="LOW">Low</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="HIGH">High</option>
+                    <option value="URGENT">Urgent</option>
+                  </select>
+                  <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded text-sm shrink-0 hover:bg-blue-700">Add</button>
+                </div>
+                <div className="flex items-end gap-1.5">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                    <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                  </div>
+                  <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                    <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  </div>
+                </div>
+              </form>
+
+              {/* Task list */}
+              {todosForDay(displayTodos, selectedDay).length === 0 ? (
+                <div className="text-sm text-gray-400 dark:text-gray-500 text-center py-4">No tasks yet — add one above.</div>
+              ) : (
+                <div className="space-y-2">
+                  {todosForDay(displayTodos, selectedDay).map(t => (
+                    <div key={t.id} className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 shadow-sm overflow-hidden">
+                      {editingId === t.id ? (
+                        <div className="p-3 flex flex-col gap-2">
+                          <input
+                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                            value={editTitle}
+                            onChange={e => setEditTitle(e.target.value)}
+                            placeholder="Title"
+                            autoFocus
+                          />
+                          <input
+                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                            value={editDesc}
+                            onChange={e => setEditDesc(e.target.value)}
+                            placeholder="Description"
+                          />
+                          <div className="flex items-end gap-1.5">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                              <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editStartTime} onChange={e => setEditStartTime(e.target.value)} />
+                            </div>
+                            <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                              <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editEndTime} onChange={e => setEditEndTime(e.target.value)} />
+                            </div>
+                          </div>
+                          <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <option value="LOW">Low</option>
+                            <option value="MEDIUM">Medium</option>
+                            <option value="HIGH">High</option>
+                            <option value="URGENT">Urgent</option>
+                          </select>
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={cancelEdit} className="px-3 py-1 border dark:border-gray-600 rounded text-sm dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
+                            <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">Save</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={`flex items-start gap-3 p-3 ${t.completed ? 'opacity-60' : ''}`}>
+                          <input type="checkbox" checked={t.completed} onChange={e => toggle(t.id, e.target.checked)} className="mt-0.5 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className={`text-sm font-medium ${t.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
+                              {t.title}
+                            </div>
+                            {(t.startAt || t.dueAt) && (
+                              <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                                {t.startAt && t.dueAt
+                                  ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
+                                  : t.startAt ? `${formatDueTime(t.startAt)} –` : formatDueTime(t.dueAt)}
+                              </div>
+                            )}
+                            {t.description && <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t.description}</div>}
+                            {t.tags && t.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {t.tags.map(tag => (
+                                  <span key={tag.id} style={{ backgroundColor: tag.color }} className="text-xs px-1.5 py-0.5 rounded-full text-white">{tag.name}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                              {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                            </span>
+                            <button onClick={() => startEdit(t)} className="text-blue-600 dark:text-blue-400 text-xs hover:underline">Edit</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -946,11 +1193,29 @@ export default function App() {
             </button>
           </div>
 
-          <form onSubmit={create} className="mb-4">
-            <div className="flex flex-wrap gap-2 items-center mb-2">
+          <form onSubmit={create} className="mb-4 flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
               <input className="flex-1 min-w-[8rem] p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
               <input className="flex-1 min-w-[8rem] p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500" value={desc} onChange={e => setDesc(e.target.value)} placeholder="Description" />
-              <input type="datetime-local" className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white" value={due} onChange={e => setDue(e.target.value)} />
+            </div>
+            <div className="flex flex-wrap gap-2 items-end">
+              <div className="flex flex-wrap items-end gap-2 p-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Date</span>
+                  <input type="date" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={todoDate} onChange={e => setTodoDate(e.target.value)} />
+                </div>
+                <div className="flex items-end gap-1.5">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                    <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                  </div>
+                  <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                    <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  </div>
+                </div>
+              </div>
               <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>
@@ -963,7 +1228,7 @@ export default function App() {
                   <option key={r} value={r}>{RECURRENCE_LABELS[r]}</option>
                 ))}
               </select>
-              <button className="bg-blue-600 text-white px-3 py-2 rounded shrink-0">Add</button>
+              <button className="bg-blue-600 text-white px-3 py-2 rounded shrink-0 self-end">Add</button>
             </div>
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 items-center">
@@ -1034,12 +1299,38 @@ export default function App() {
                             onChange={e => setEditDesc(e.target.value)}
                             placeholder="Description"
                           />
-                          <input
-                            type="datetime-local"
-                            className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                            value={editDue}
-                            onChange={e => setEditDue(e.target.value)}
-                          />
+                          <div className="flex flex-wrap items-end gap-2 p-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/40">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Date</span>
+                              <input
+                                type="date"
+                                className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                value={editDate}
+                                onChange={e => setEditDate(e.target.value)}
+                              />
+                            </div>
+                            <div className="flex items-end gap-1.5">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                                <input
+                                  type="time"
+                                  className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                  value={editStartTime}
+                                  onChange={e => setEditStartTime(e.target.value)}
+                                />
+                              </div>
+                              <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                                <input
+                                  type="time"
+                                  className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                  value={editEndTime}
+                                  onChange={e => setEditEndTime(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
                           <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             <option value="LOW">Low</option>
                             <option value="MEDIUM">Medium</option>
@@ -1094,7 +1385,15 @@ export default function App() {
                                     ↻ {RECURRENCE_LABELS[t.recurrenceRule]}
                                   </span>
                                 )}
-                                {t.dueAt ? <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">{formatDueTime(t.dueAt)}</span> : null}
+                                {(t.startAt || t.dueAt) ? (
+                                  <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">
+                                    {t.startAt && t.dueAt
+                                      ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
+                                      : t.startAt
+                                      ? `${formatDueTime(t.startAt)} –`
+                                      : formatDueTime(t.dueAt)}
+                                  </span>
+                                ) : null}
                               </div>
                               {t.description && <div className="text-sm text-gray-600 dark:text-gray-400">{t.description}</div>}
                               {t.tags && t.tags.length > 0 && (

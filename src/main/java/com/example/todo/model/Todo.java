@@ -28,6 +28,7 @@ public class Todo {
     private Priority priority = Priority.MEDIUM;
 
     private LocalDateTime createdAt;
+    private LocalDateTime startAt;
     private LocalDateTime dueAt;
     private LocalDateTime deletedAt;
 
@@ -78,6 +79,9 @@ public class Todo {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getStartAt() { return startAt; }
+    public void setStartAt(LocalDateTime startAt) { this.startAt = startAt; }
 
     public LocalDateTime getDueAt() { return dueAt; }
     public void setDueAt(LocalDateTime dueAt) { this.dueAt = dueAt; }
