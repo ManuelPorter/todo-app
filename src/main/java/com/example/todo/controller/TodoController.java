@@ -157,13 +157,26 @@ public class TodoController {
         Todo existing = found.get();
         existing.setTitle(input.getTitle());
         existing.setDescription(input.getDescription());
-        existing.setCompleted(input.isCompleted());
         existing.setStartAt(input.getStartAt());
         existing.setDueAt(input.getDueAt());
         existing.setPriority(input.getPriority() != null ? input.getPriority() : existing.getPriority());
         existing.setRecurrenceRule(input.getRecurrenceRule());
+        existing.setRecurrenceDays(input.getRecurrenceDays());
+        existing.setAllDay(input.isAllDay());
         if (input.getTagIds() != null) {
             existing.setTags(resolveTagsForUser(input.getTagIds(), userId));
+        }
+        if (input.isCompleted() && existing.getRecurrenceRule() != null && existing.getDueAt() != null) {
+            LocalDateTime next = existing.getDueAt();
+            LocalDateTime now = LocalDateTime.now();
+            while (!next.isAfter(now)) {
+                next = existing.getRecurrenceRule().nextOccurrenceAfter(next, existing.getRecurrenceDays());
+            }
+            existing.setDueAt(next);
+            existing.setCompleted(false);
+            existing.setMissedCount(0);
+        } else {
+            existing.setCompleted(input.isCompleted());
         }
         return ResponseEntity.ok(repo.save(existing));
     }

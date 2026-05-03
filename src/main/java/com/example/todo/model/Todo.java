@@ -38,8 +38,14 @@ public class Todo {
     @Column(name = "parent_id")
     private Long parentId;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = RecurrenceRuleConverter.class)
     private RecurrenceRule recurrenceRule;
+
+    private int missedCount = 0;
+
+    private int recurrenceDays = 0;
+
+    private boolean allDay = false;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
@@ -106,4 +112,13 @@ public class Todo {
 
     public RecurrenceRule getRecurrenceRule() { return recurrenceRule; }
     public void setRecurrenceRule(RecurrenceRule recurrenceRule) { this.recurrenceRule = recurrenceRule; }
+
+    public int getMissedCount() { return missedCount; }
+    public void setMissedCount(int missedCount) { this.missedCount = missedCount; }
+
+    public int getRecurrenceDays() { return recurrenceDays; }
+    public void setRecurrenceDays(int recurrenceDays) { this.recurrenceDays = recurrenceDays; }
+
+    public boolean isAllDay() { return allDay; }
+    public void setAllDay(boolean allDay) { this.allDay = allDay; }
 }
