@@ -1,86 +1,153 @@
-# todo-app
-todo app 0.1
-# Todo App (Spring Boot + H2 + React 18 + TypeScript + Vite + Tailwind CSS)
+# Todo App
 
-# Prod server: Express.js with API proxy middleware
+A full-stack Todo application with authentication, hierarchical tasks, recurring todos, tagging, and soft deletes.
 
-This repository contains a minimal Todo application built with Spring Boot (Java), JPA (H2 in-memory database), and a lightweight static JavaScript frontend served from `src/main/resources/static/index.html`.
+## Tech Stack
 
-Quick start (requires Java 17 and Maven):
+**Backend**
+- Java 17 + Spring Boot 3.1.4
+- Spring Security with JWT authentication (JJWT 0.12.3)
+- Spring Data JPA + H2 database (file-based)
+- Flyway database migrations
+- Maven
 
-1. Build and run the app:
+**Frontend**
+- React 18 + TypeScript 5
+- Vite 5 (dev server) / Express.js (production server)
+- Tailwind CSS 3
+- Vitest + React Testing Library
 
-	mvn -DskipTests spring-boot:run
+---
 
-2. Open the frontend in your browser:
+## Quick Start
 
-	http://localhost:8080/
+**Requirements:** Java 17, Maven, Node.js
 
-API endpoints:
+### Backend
 
-- GET /api/todos - list todos
-- POST /api/todos - create todo (JSON: {title, description})
-- GET /api/todos/{id} - get todo
-- PUT /api/todos/{id} - update todo
-- DELETE /api/todos/{id} - delete todo
+```bash
+mvn -DskipTests spring-boot:run
+```
 
-H2 console is available at http://localhost:8080/h2-console (JDBC URL: `jdbc:h2:mem:todos`)
+Runs on `http://localhost:8080`
 
-Postgres/MySQL
+H2 console: `http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:file:./data/todos`)
 
-Frontend (React + TypeScript + Tailwind)
+> Enable H2 console by activating the dev profile: add `-Dspring.profiles.active=dev`
 
--------------------------------------
+### Frontend
 
-I've added a separate frontend under `frontend/` built with Vite + React + TypeScript and Tailwind CSS. It also includes a small Express server to serve built static files and proxy `/api` requests to the Spring Boot backend.
+```bash
+cd frontend
+npm install
+```
 
-How to run the frontend locally:
+**Development** (Vite dev server with proxy to backend):
+```bash
+npm run dev
+# http://localhost:5173
+```
 
-1. Change into the `frontend` directory and install dependencies:
+**Production** (Express server serving built assets):
+```bash
+npm run build
+npm start
+# http://localhost:3000
+```
 
-	cd frontend
-	npm install
+---
 
-2a. For development (Vite dev server with proxy to backend):
+## Features
 
-	npm run dev
+- **Authentication** — JWT-based login/register with BCrypt password hashing (24-hour tokens)
+- **Todo Management** — Create, update, soft delete, and restore todos
+- **Subtasks** — Hierarchical tasks with parent/child relationships
+- **Priority Levels** — LOW, MEDIUM, HIGH, URGENT
+- **Tags** — User-scoped labels with color support (many-to-many)
+- **Recurring Todos** — DAILY, WEEKLY, MONTHLY, and custom weekly bitmask patterns; auto-advances overdue recurring tasks at midnight
+- **All-day Events** — Flag todos as all-day (no time component)
+- **Trash / Soft Deletes** — Deleted todos go to trash, can be restored or permanently deleted
+- **Bulk Operations** — Bulk mark complete, bulk delete, bulk restore
+- **Search & Pagination** — Search by title/description; paginated, sortable list endpoints
+- **Scheduled Recurrence** — Spring `@Scheduled` job runs daily at midnight to advance overdue recurring tasks
 
-	The Vite dev server runs on http://localhost:5173 and proxies `/api` to the Spring Boot backend at http://localhost:8080.
+---
 
-2b. For production preview / serve built files with the included Express server:
+## API Endpoints
 
-	npm run build
-	npm start
+All endpoints except `/api/auth/**` require `Authorization: Bearer <token>`.
 
-	Express will serve the built assets on http://localhost:3000 and proxy `/api` to the backend.
+### Auth
+```
+POST   /api/auth/register
+POST   /api/auth/login
+```
 
+### Todos
+```
+GET    /api/todos                      # List todos (paginated, searchable)
+POST   /api/todos                      # Create todo
+GET    /api/todos/{id}                 # Get todo
+PUT    /api/todos/{id}                 # Update todo
+DELETE /api/todos/{id}                 # Soft delete
 
------------------------------
+GET    /api/todos/{id}/subtasks        # List subtasks
+POST   /api/todos/{id}/subtasks        # Create subtask
 
-# Tests
+GET    /api/todos/trash                # List trashed todos
+PUT    /api/todos/{id}/restore         # Restore from trash
+DELETE /api/todos/{id}/permanent       # Permanent delete
+DELETE /api/todos/trash                # Empty trash
 
-1. Backend
+PUT    /api/todos/bulk/mark-complete   # Bulk mark complete
+DELETE /api/todos/bulk                 # Bulk soft delete
+PUT    /api/todos/bulk/restore         # Bulk restore
+```
 
-Run all tests
-"mvn test"
+### Tags
+```
+GET    /api/tags                       # List user's tags
+POST   /api/tags                       # Create tag
+PUT    /api/tags/{id}                  # Update tag
+DELETE /api/tags/{id}                  # Delete tag
+```
 
-Run a single test class
-"mvn test -Dtest=JwtUtilTest"
-"mvn test -Dtest=AuthControllerTest"
-"mvn test -Dtest=TodoControllerTest"
+---
 
-Run a single test method
-"mvn test -Dtest=TodoControllerTest#deleteTodo_existingId_returnsNoContent"
+## Database Migrations
 
-2. Frontend
+Managed by Flyway. Migration scripts are in `src/main/resources/db/migration/`:
 
-from /frontend/
+| Version | Description |
+|---------|-------------|
+| V1 | Initial schema — users, tags, todos, todo_tags |
+| V2 | Add all-day event support |
 
-Run once and exit
-"npm test"          
+---
 
-re-runs on file changes (good during development)
-"npm run test:watch"
+## Tests
 
-run once + generate coverage report
-"npm run test:coverage" 
+### Backend
+
+```bash
+# Run all tests
+mvn test
+
+# Run a specific test class
+mvn test -Dtest=AuthControllerTest
+mvn test -Dtest=TodoControllerTest
+mvn test -Dtest=JwtUtilTest
+
+# Run a specific test method
+mvn test -Dtest=TodoControllerTest#deleteTodo_existingId_returnsNoContent
+```
+
+### Frontend
+
+```bash
+cd frontend
+
+npm test                  # Run once
+npm run test:watch        # Watch mode
+npm run test:coverage     # Run with coverage report
+```
