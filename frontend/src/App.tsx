@@ -14,18 +14,22 @@ type Subtask = {
   completed: boolean
 }
 
-type RecurrenceRule = 'DAILY' | 'WEEKLY_MON' | 'WEEKLY_TUE' | 'WEEKLY_WED' | 'WEEKLY_THU' | 'WEEKLY_FRI' | 'WEEKLY_SAT' | 'WEEKLY_SUN' | 'MONTHLY'
+type RecurrenceRule = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'WEEKLY_CUSTOM'
 
 const RECURRENCE_LABELS: Record<RecurrenceRule, string> = {
   DAILY: 'Daily',
-  WEEKLY_MON: 'Every Monday',
-  WEEKLY_TUE: 'Every Tuesday',
-  WEEKLY_WED: 'Every Wednesday',
-  WEEKLY_THU: 'Every Thursday',
-  WEEKLY_FRI: 'Every Friday',
-  WEEKLY_SAT: 'Every Saturday',
-  WEEKLY_SUN: 'Every Sunday',
+  WEEKLY: 'Weekly',
   MONTHLY: 'Monthly',
+  WEEKLY_CUSTOM: 'Custom days',
+}
+
+const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+function recurrenceLabel(rule: RecurrenceRule, recurrenceDays?: number): string {
+  if (rule !== 'WEEKLY_CUSTOM') return RECURRENCE_LABELS[rule]
+  if (!recurrenceDays) return 'Custom days'
+  const days = DAY_NAMES.filter((_, i) => recurrenceDays & (1 << i))
+  return days.length ? days.join(', ') : 'Custom days'
 }
 
 type Todo = {
@@ -41,6 +45,9 @@ type Todo = {
   tags?: Tag[]
   parentId?: number
   recurrenceRule?: RecurrenceRule
+  recurrenceDays?: number
+  missedCount?: number
+  allDay?: boolean
 }
 
 type AuthState = {
@@ -203,7 +210,7 @@ function AuthPage({ onAuth, dark, onToggleDark }: { onAuth: (auth: AuthState) =>
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(getStoredAuth)
-  const [view, setView] = useState<'todos' | 'trash' | 'calendar'>('todos')
+  const [view, setView] = useState<'todos' | 'trash' | 'calendar' | 'delayed'>('todos')
   const [calendarDate, setCalendarDate] = useState(() => { const d = new Date(); d.setDate(1); return d })
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [todos, setTodos] = useState<Todo[]>([])
@@ -217,12 +224,15 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [sortField, setSortField] = useState('dueAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const [showCompleted, setShowCompleted] = useState(false)
   const [dayPage, setDayPage] = useState(0)
   const DAYS_PER_PAGE = 3
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set())
   const [newRecurrence, setNewRecurrence] = useState<RecurrenceRule | ''>('')
+  const [newRecurrenceDays, setNewRecurrenceDays] = useState(0b0011111)
+  const [newAllDay, setNewAllDay] = useState(false)
 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -232,6 +242,8 @@ export default function App() {
   const [editEndTime, setEditEndTime] = useState('')
   const [editPriority, setEditPriority] = useState<Priority>('MEDIUM')
   const [editRecurrence, setEditRecurrence] = useState<RecurrenceRule | ''>('')
+  const [editRecurrenceDays, setEditRecurrenceDays] = useState(0b0011111)
+  const [editAllDay, setEditAllDay] = useState(false)
 
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null)
@@ -357,10 +369,18 @@ export default function App() {
   async function create(e: React.FormEvent) {
     e.preventDefault()
     if (!title) return
-    const payload: any = { title, description: desc, priority, tagIds: newTodoTagIds }
-    if (todoDate && startTime) payload.startAt = `${todoDate}T${startTime}`
-    if (todoDate && endTime) payload.dueAt = `${todoDate}T${endTime}`
-    if (newRecurrence) payload.recurrenceRule = newRecurrence
+    const payload: any = { title, description: desc, priority, tagIds: newTodoTagIds, allDay: newAllDay }
+    if (newAllDay && todoDate) {
+      payload.startAt = `${todoDate}T00:00:00`
+      payload.dueAt = `${todoDate}T23:59:59`
+    } else {
+      if (todoDate && startTime) payload.startAt = `${todoDate}T${startTime}`
+      if (todoDate && endTime) payload.dueAt = `${todoDate}T${endTime}`
+    }
+    if (newRecurrence) {
+      payload.recurrenceRule = newRecurrence
+      if (newRecurrence === 'WEEKLY_CUSTOM') payload.recurrenceDays = newRecurrenceDays
+    }
     try {
       const res = await fetch('/api/todos', {
         method: 'POST',
@@ -369,7 +389,7 @@ export default function App() {
       })
       handleUnauthorized(res.status)
       if (!res.ok) throw new Error(`Failed to create todo (${res.status})`)
-      setTitle(''); setDesc(''); setTodoDate(selectedDay || ''); setStartTime(''); setEndTime(''); setPriority('MEDIUM'); setNewTodoTagIds([]); setNewRecurrence('')
+      setTitle(''); setDesc(''); setTodoDate(selectedDay || ''); setStartTime(''); setEndTime(''); setPriority('MEDIUM'); setNewTodoTagIds([]); setNewRecurrence(''); setNewRecurrenceDays(0b0011111); setNewAllDay(false)
       setError(null)
       load(true)
     } catch (err) {
@@ -431,9 +451,17 @@ export default function App() {
     }
     return Array.from(map.entries())
       .sort(([a], [b]) => {
+        if (a === 'none' && b === 'none') return 0
         if (a === 'none') return 1
         if (b === 'none') return -1
-        return b.localeCompare(a)
+        const today = new Date().toLocaleDateString('en-CA')
+        if (a === today) return -1
+        if (b === today) return 1
+        const aFuture = a > today
+        const bFuture = b > today
+        if (aFuture && bFuture) return a.localeCompare(b)    // future: nearest first
+        if (!aFuture && !bFuture) return b.localeCompare(a)  // overdue: most recent first
+        return aFuture ? -1 : 1                              // future before overdue
       })
       .map(([key, items]) => {
         const { text, overdue } = dayLabel(key)
@@ -475,22 +503,25 @@ export default function App() {
 
   async function toggle(id: number, checked: boolean) {
     if (pendingIds.has(id)) return
+    const current = todos.find(t => t.id === id)
+    if (!current) return
     setPendingIds(prev => new Set(prev).add(id))
     try {
-      const res = await fetch('/api/todos/' + id, { headers: authHeaders() })
-      handleUnauthorized(res.status)
-      if (!res.ok) throw new Error(`Failed to fetch todo (${res.status})`)
-      const t = await res.json()
-      t.completed = checked
-      const putRes = await fetch('/api/todos/' + id, {
+      const payload = {
+        ...current,
+        completed: checked,
+        tagIds: current.tags?.map(tag => tag.id) ?? [],
+      }
+      const res = await fetch('/api/todos/' + id, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(t),
+        body: JSON.stringify(payload),
       })
-      handleUnauthorized(putRes.status)
-      if (!putRes.ok) throw new Error(`Failed to update todo (${putRes.status})`)
+      handleUnauthorized(res.status)
+      if (!res.ok) throw new Error(`Failed to update todo (${res.status})`)
+      const updated: Todo = await res.json()
+      setTodos(prev => prev.map(t => t.id === updated.id ? updated : t))
       setError(null)
-      load(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update todo')
     } finally {
@@ -508,6 +539,8 @@ export default function App() {
     setEditPriority(t.priority ?? 'MEDIUM')
     setEditTagIds(t.tags?.map(tag => tag.id) ?? [])
     setEditRecurrence(t.recurrenceRule ?? '')
+    setEditRecurrenceDays(t.recurrenceDays ?? 0b0011111)
+    setEditAllDay(t.allDay ?? false)
   }
 
   function cancelEdit() {
@@ -523,9 +556,16 @@ export default function App() {
       priority: editPriority,
       tagIds: editTagIds,
       recurrenceRule: editRecurrence || null,
+      recurrenceDays: editRecurrence === 'WEEKLY_CUSTOM' ? editRecurrenceDays : 0,
+      allDay: editAllDay,
     }
-    if (editDate && editStartTime) payload.startAt = `${editDate}T${editStartTime}`
-    if (editDate && editEndTime) payload.dueAt = `${editDate}T${editEndTime}`
+    if (editAllDay && editDate) {
+      payload.startAt = `${editDate}T00:00:00`
+      payload.dueAt = `${editDate}T23:59:59`
+    } else {
+      if (editDate && editStartTime) payload.startAt = `${editDate}T${editStartTime}`
+      if (editDate && editEndTime) payload.dueAt = `${editDate}T${editEndTime}`
+    }
     try {
       const res = await fetch('/api/todos/' + id, {
         method: 'PUT',
@@ -759,13 +799,16 @@ export default function App() {
     ? todos.filter(t => t.tags?.some(tag => tag.id === selectedTagId))
     : todos
 
-  const displayTodos = sortTodos(filteredTodos)
+  const displayTodos = sortTodos(showCompleted ? filteredTodos : filteredTodos.filter(t => !t.completed))
   const todayKey = new Date().toLocaleDateString('en-CA')
   const calendarDays = getCalendarDays(calendarDate)
   const monthLabel = calendarDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const allGroups = groupedTodos(displayTodos)
   const totalDayPages = Math.ceil(allGroups.length / DAYS_PER_PAGE)
   const visibleGroups = allGroups.slice(dayPage * DAYS_PER_PAGE, (dayPage + 1) * DAYS_PER_PAGE)
+  const delayedTodos = todos
+    .filter(t => !t.completed && !t.deletedAt && dayKey(t.dueAt, t.startAt) !== 'none' && dayKey(t.dueAt, t.startAt) < todayKey)
+    .sort((a, b) => dayKey(a.dueAt, a.startAt).localeCompare(dayKey(b.dueAt, b.startAt)))
 
   return (
     <div className="p-4 sm:p-6 max-w-3xl mx-auto text-gray-900 dark:text-gray-100">
@@ -805,12 +848,12 @@ export default function App() {
           Todos
         </button>
         <button
-          onClick={() => setView('trash')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'trash' ? 'border-red-500 text-red-500' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+          onClick={() => setView('delayed')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'delayed' ? 'border-orange-500 text-orange-500' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
         >
-          Trash
-          {trashItems.length > 0 && (
-            <span className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
+          Delayed
+          {delayedTodos.length > 0 && (
+            <span className="text-xs bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-400 rounded-full px-1.5 py-0.5 font-semibold">{delayedTodos.length}</span>
           )}
         </button>
         <button
@@ -819,6 +862,17 @@ export default function App() {
         >
           Calendar
         </button>
+        <div className="ml-auto flex items-center border-l dark:border-gray-700 pl-2">
+          <button
+            onClick={() => setView('trash')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-1.5 ${view === 'trash' ? 'border-red-500 text-red-500' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+          >
+            Trash
+            {trashItems.length > 0 && (
+              <span className="text-xs bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 rounded-full px-1.5 py-0.5 font-semibold">{trashItems.length}</span>
+            )}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -957,7 +1011,7 @@ export default function App() {
                         key={t.id}
                         className={`text-xs truncate px-1 py-0.5 rounded ${calendarChipClass[t.priority ?? 'MEDIUM']} ${t.completed ? 'opacity-50 line-through' : ''}`}
                       >
-                        {t.startAt ? `${formatDueTime(t.startAt)} ` : ''}{t.title}
+                        {(t.startAt && !t.allDay) ? `${formatDueTime(t.startAt)} ` : ''}{t.title}
                       </div>
                     ))}
                     {dayTodos.length > 2 && (
@@ -1028,16 +1082,24 @@ export default function App() {
                             onChange={e => setEditDesc(e.target.value)}
                             placeholder="Description"
                           />
-                          <div className="flex items-end gap-1.5">
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
-                              <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editStartTime} onChange={e => setEditStartTime(e.target.value)} />
-                            </div>
-                            <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
-                              <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editEndTime} onChange={e => setEditEndTime(e.target.value)} />
-                            </div>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <label className="flex items-center gap-1.5 cursor-pointer self-end pb-1.5">
+                              <input type="checkbox" checked={editAllDay} onChange={e => setEditAllDay(e.target.checked)} className="rounded" />
+                              <span className="text-xs text-gray-500 dark:text-gray-400 select-none">All day</span>
+                            </label>
+                            {!editAllDay && (
+                              <div className="flex items-end gap-1.5">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                                  <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editStartTime} onChange={e => setEditStartTime(e.target.value)} />
+                                </div>
+                                <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                                  <input type="time" className="p-1.5 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={editEndTime} onChange={e => setEditEndTime(e.target.value)} />
+                                </div>
+                              </div>
+                            )}
                           </div>
                           <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             <option value="LOW">Low</option>
@@ -1059,9 +1121,11 @@ export default function App() {
                             </div>
                             {(t.startAt || t.dueAt) && (
                               <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                                {t.startAt && t.dueAt
-                                  ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
-                                  : t.startAt ? `${formatDueTime(t.startAt)} –` : formatDueTime(t.dueAt)}
+                                {t.allDay
+                                  ? 'All day'
+                                  : t.startAt && t.dueAt
+                                    ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
+                                    : t.startAt ? `${formatDueTime(t.startAt)} –` : formatDueTime(t.dueAt)}
                               </div>
                             )}
                             {t.description && <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t.description}</div>}
@@ -1087,6 +1151,259 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+      ) : view === 'delayed' ? (
+        <div>
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-gray-800 dark:text-gray-200">Delayed Tasks</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+              {delayedTodos.length} task{delayedTodos.length !== 1 ? 's' : ''} past due
+            </p>
+          </div>
+          <div className="space-y-6">
+            {delayedTodos.length === 0 ? (
+              <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">No delayed tasks. You're all caught up!</div>
+            ) : (
+              groupedTodos(delayedTodos).map(({ key, label, items }) => (
+                <div key={key}>
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-red-500">{label}</span>
+                    <div className="flex-1 min-w-[2rem] h-px bg-red-200 dark:bg-red-900/50" />
+                    <button
+                      onClick={() => bulkMarkComplete(items.filter(t => !t.completed).map(t => t.id))}
+                      disabled={items.every(t => t.completed)}
+                      className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50 disabled:opacity-40"
+                    >
+                      Mark complete
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    {items.map(t => (
+                      <div key={t.id} className={`p-3 bg-white dark:bg-gray-800 rounded shadow ${t.completed ? 'opacity-75' : ''}`}>
+                        {editingId === t.id ? (
+                          <div className="flex flex-col gap-2">
+                            <input
+                              className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                              value={editTitle}
+                              onChange={e => setEditTitle(e.target.value)}
+                              placeholder="Title"
+                              autoFocus
+                            />
+                            <input
+                              className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                              value={editDesc}
+                              onChange={e => setEditDesc(e.target.value)}
+                              placeholder="Description"
+                            />
+                            <div className="flex flex-wrap items-end gap-2 p-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/40">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Date</span>
+                                <input
+                                  type="date"
+                                  className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                  value={editDate}
+                                  onChange={e => setEditDate(e.target.value)}
+                                />
+                              </div>
+                              <label className="flex items-center gap-1.5 cursor-pointer self-end pb-1.5">
+                                <input type="checkbox" checked={editAllDay} onChange={e => setEditAllDay(e.target.checked)} className="rounded" />
+                                <span className="text-xs text-gray-500 dark:text-gray-400 select-none">All day</span>
+                              </label>
+                              {!editAllDay && (
+                                <div className="flex items-end gap-1.5">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                                    <input
+                                      type="time"
+                                      className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                      value={editStartTime}
+                                      onChange={e => setEditStartTime(e.target.value)}
+                                    />
+                                  </div>
+                                  <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                                    <input
+                                      type="time"
+                                      className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                      value={editEndTime}
+                                      onChange={e => setEditEndTime(e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                              <option value="LOW">Low</option>
+                              <option value="MEDIUM">Medium</option>
+                              <option value="HIGH">High</option>
+                              <option value="URGENT">Urgent</option>
+                            </select>
+                            <select value={editRecurrence} onChange={e => setEditRecurrence(e.target.value as RecurrenceRule | '')} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                              <option value="">No repeat</option>
+                              {(Object.keys(RECURRENCE_LABELS) as RecurrenceRule[]).map(r => (
+                                <option key={r} value={r}>{RECURRENCE_LABELS[r]}</option>
+                              ))}
+                            </select>
+                            {editRecurrence === 'WEEKLY_CUSTOM' && (
+                              <div className="flex gap-1.5">
+                                {DAY_NAMES.map((day, i) => {
+                                  const bit = 1 << i
+                                  const active = (editRecurrenceDays & bit) !== 0
+                                  return (
+                                    <button
+                                      key={day}
+                                      type="button"
+                                      onClick={() => setEditRecurrenceDays(d => active ? d & ~bit : d | bit)}
+                                      className={`text-xs w-9 h-9 rounded-full font-medium transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+                                    >
+                                      {day[0]}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            {tags.length > 0 && (
+                              <div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Labels</div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {tags.map(tag => (
+                                    <button
+                                      key={tag.id}
+                                      type="button"
+                                      onClick={() => toggleEditTag(tag.id)}
+                                      style={editTagIds.includes(tag.id) ? { backgroundColor: tag.color } : undefined}
+                                      className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                                        editTagIds.includes(tag.id)
+                                          ? 'text-white border-transparent'
+                                          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                      }`}
+                                    >
+                                      {tag.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div className="flex gap-2 justify-end">
+                              <button onClick={cancelEdit} className="px-3 py-1 border dark:border-gray-600 rounded text-sm dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
+                              <button onClick={() => saveEdit(t.id)} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-start gap-3 flex-wrap">
+                              <input type="checkbox" checked={t.completed} disabled={pendingIds.has(t.id)} onChange={e => toggle(t.id, e.target.checked)} className="mt-1 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold flex items-center gap-2 flex-wrap">
+                                  {t.title}
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).className}`}>
+                                    {(priorityBadge[t.priority] ?? priorityBadge['MEDIUM']).label}
+                                  </span>
+                                  {t.recurrenceRule && (
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                                      ↻ {recurrenceLabel(t.recurrenceRule, t.recurrenceDays)}
+                                    </span>
+                                  )}
+                                  {t.recurrenceRule && (t.missedCount ?? 0) > 0 && (
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-semibold">
+                                      {t.missedCount} missed
+                                    </span>
+                                  )}
+                                  {(t.startAt || t.dueAt) ? (
+                                    <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">
+                                      {t.allDay
+                                        ? 'All day'
+                                        : t.startAt && t.dueAt
+                                          ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
+                                          : t.startAt
+                                          ? `${formatDueTime(t.startAt)} –`
+                                          : formatDueTime(t.dueAt)}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {t.description && <div className="text-sm text-gray-600 dark:text-gray-400">{t.description}</div>}
+                                {t.tags && t.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {t.tags.map(tag => (
+                                      <span key={tag.id} style={{ backgroundColor: tag.color }} className="text-xs px-1.5 py-0.5 rounded-full text-white">
+                                        {tag.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <button onClick={() => startEdit(t)} className="text-blue-600 dark:text-blue-400 text-sm">Edit</button>
+                              <button onClick={() => remove(t.id)} disabled={pendingIds.has(t.id)} className="text-red-600 dark:text-red-400 text-sm disabled:opacity-50">Trash</button>
+                            </div>
+                            <div className="mt-2 ml-6">
+                              <button
+                                onClick={() => toggleExpand(t.id)}
+                                className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center gap-1"
+                              >
+                                <span>{expandedTodos.has(t.id) ? '▼' : '▶'}</span>
+                                <span>
+                                  Subtasks
+                                  {subtasksMap[t.id]?.length
+                                    ? ` · ${subtasksMap[t.id].filter(s => s.completed).length}/${subtasksMap[t.id].length}`
+                                    : ''}
+                                </span>
+                              </button>
+                              {expandedTodos.has(t.id) && (
+                                <div className="mt-1.5 space-y-1">
+                                  {subtasksMap[t.id]?.map(s => (
+                                    <div key={s.id} className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={s.completed}
+                                        onChange={e => toggleSubtask(t.id, s.id, e.target.checked)}
+                                        className="mt-px"
+                                      />
+                                      <span className={`text-sm flex-1 ${s.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                        {s.title}
+                                      </span>
+                                      <button
+                                        onClick={() => deleteSubtask(t.id, s.id)}
+                                        className="text-red-400 hover:text-red-600 dark:hover:text-red-300 text-xs leading-none"
+                                        title="Remove subtask"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  ))}
+                                  {addingSubtaskId === t.id ? (
+                                    <div className="flex gap-1 mt-1">
+                                      <input
+                                        className="flex-1 text-sm p-1 border dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500"
+                                        value={newSubtaskTitle}
+                                        onChange={e => setNewSubtaskTitle(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') createSubtask(t.id); if (e.key === 'Escape') { setAddingSubtaskId(null); setNewSubtaskTitle('') } }}
+                                        placeholder="Subtask title"
+                                        autoFocus
+                                      />
+                                      <button onClick={() => createSubtask(t.id)} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Add</button>
+                                      <button onClick={() => { setAddingSubtaskId(null); setNewSubtaskTitle('') }} className="text-xs px-2 py-1 border dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-gray-300">✕</button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => { setAddingSubtaskId(t.id); setNewSubtaskTitle('') }}
+                                      className="text-xs text-blue-500 dark:text-blue-400 hover:underline mt-0.5"
+                                    >
+                                      + Add subtask
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       ) : (
         <>
@@ -1191,6 +1508,21 @@ export default function App() {
             >
               {sortDir === 'desc' ? '↓' : '↑'}
             </button>
+            <button
+              onClick={() => setShowCompleted(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-all ${
+                showCompleted
+                  ? 'bg-green-500 border-green-500 text-white shadow-sm'
+                  : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:border-green-400 dark:hover:border-green-500 hover:text-green-600 dark:hover:text-green-400'
+              }`}
+              title={showCompleted ? 'Click to hide completed tasks' : 'Click to show completed tasks'}
+            >
+              <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="8" r="6.5" />
+                <path d="M5 8l2 2 4-4" />
+              </svg>
+              {showCompleted ? 'Hide completed' : 'Show completed'}
+            </button>
           </div>
 
           <form onSubmit={create} className="mb-4 flex flex-col gap-2">
@@ -1204,17 +1536,23 @@ export default function App() {
                   <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Date</span>
                   <input type="date" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={todoDate} onChange={e => setTodoDate(e.target.value)} />
                 </div>
-                <div className="flex items-end gap-1.5">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
-                    <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                <label className="flex items-center gap-1.5 cursor-pointer self-end pb-1.5">
+                  <input type="checkbox" checked={newAllDay} onChange={e => setNewAllDay(e.target.checked)} className="rounded" />
+                  <span className="text-xs text-gray-500 dark:text-gray-400 select-none">All day</span>
+                </label>
+                {!newAllDay && (
+                  <div className="flex items-end gap-1.5">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                      <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                    </div>
+                    <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                      <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                    </div>
                   </div>
-                  <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
-                    <input type="time" className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28" value={endTime} onChange={e => setEndTime(e.target.value)} />
-                  </div>
-                </div>
+                )}
               </div>
               <select value={priority} onChange={e => setPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white">
                 <option value="LOW">Low</option>
@@ -1230,6 +1568,24 @@ export default function App() {
               </select>
               <button className="bg-blue-600 text-white px-3 py-2 rounded shrink-0 self-end">Add</button>
             </div>
+            {newRecurrence === 'WEEKLY_CUSTOM' && (
+              <div className="flex gap-1.5">
+                {DAY_NAMES.map((day, i) => {
+                  const bit = 1 << i
+                  const active = (newRecurrenceDays & bit) !== 0
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setNewRecurrenceDays(d => active ? d & ~bit : d | bit)}
+                      className={`text-xs w-9 h-9 rounded-full font-medium transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+                    >
+                      {day[0]}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 items-center">
                 <span className="text-xs text-gray-500 dark:text-gray-400">Labels:</span>
@@ -1309,27 +1665,33 @@ export default function App() {
                                 onChange={e => setEditDate(e.target.value)}
                               />
                             </div>
-                            <div className="flex items-end gap-1.5">
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
-                                <input
-                                  type="time"
-                                  className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
-                                  value={editStartTime}
-                                  onChange={e => setEditStartTime(e.target.value)}
-                                />
+                            <label className="flex items-center gap-1.5 cursor-pointer self-end pb-1.5">
+                              <input type="checkbox" checked={editAllDay} onChange={e => setEditAllDay(e.target.checked)} className="rounded" />
+                              <span className="text-xs text-gray-500 dark:text-gray-400 select-none">All day</span>
+                            </label>
+                            {!editAllDay && (
+                              <div className="flex items-end gap-1.5">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">Start</span>
+                                  <input
+                                    type="time"
+                                    className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                    value={editStartTime}
+                                    onChange={e => setEditStartTime(e.target.value)}
+                                  />
+                                </div>
+                                <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
+                                  <input
+                                    type="time"
+                                    className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
+                                    value={editEndTime}
+                                    onChange={e => setEditEndTime(e.target.value)}
+                                  />
+                                </div>
                               </div>
-                              <span className="text-gray-400 dark:text-gray-500 pb-2 text-sm">–</span>
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-xs text-gray-400 dark:text-gray-500 px-0.5">End</span>
-                                <input
-                                  type="time"
-                                  className="p-1.5 border border-gray-200 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-28"
-                                  value={editEndTime}
-                                  onChange={e => setEditEndTime(e.target.value)}
-                                />
-                              </div>
-                            </div>
+                            )}
                           </div>
                           <select value={editPriority} onChange={e => setEditPriority(e.target.value as Priority)} className="p-2 border dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             <option value="LOW">Low</option>
@@ -1343,6 +1705,24 @@ export default function App() {
                               <option key={r} value={r}>{RECURRENCE_LABELS[r]}</option>
                             ))}
                           </select>
+                          {editRecurrence === 'WEEKLY_CUSTOM' && (
+                            <div className="flex gap-1.5">
+                              {DAY_NAMES.map((day, i) => {
+                                const bit = 1 << i
+                                const active = (editRecurrenceDays & bit) !== 0
+                                return (
+                                  <button
+                                    key={day}
+                                    type="button"
+                                    onClick={() => setEditRecurrenceDays(d => active ? d & ~bit : d | bit)}
+                                    className={`text-xs w-9 h-9 rounded-full font-medium transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
+                                  >
+                                    {day[0]}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
                           {tags.length > 0 && (
                             <div>
                               <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Labels</div>
@@ -1382,16 +1762,23 @@ export default function App() {
                                 </span>
                                 {t.recurrenceRule && (
                                   <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                    ↻ {RECURRENCE_LABELS[t.recurrenceRule]}
+                                    ↻ {recurrenceLabel(t.recurrenceRule, t.recurrenceDays)}
+                                  </span>
+                                )}
+                                {t.recurrenceRule && (t.missedCount ?? 0) > 0 && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-semibold">
+                                    {t.missedCount} missed
                                   </span>
                                 )}
                                 {(t.startAt || t.dueAt) ? (
                                   <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">
-                                    {t.startAt && t.dueAt
-                                      ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
-                                      : t.startAt
-                                      ? `${formatDueTime(t.startAt)} –`
-                                      : formatDueTime(t.dueAt)}
+                                    {t.allDay
+                                      ? 'All day'
+                                      : t.startAt && t.dueAt
+                                        ? `${formatDueTime(t.startAt)} – ${formatDueTime(t.dueAt)}`
+                                        : t.startAt
+                                        ? `${formatDueTime(t.startAt)} –`
+                                        : formatDueTime(t.dueAt)}
                                   </span>
                                 ) : null}
                               </div>

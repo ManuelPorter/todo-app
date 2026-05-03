@@ -25,11 +25,14 @@ public class RecurrenceScheduler {
         List<Todo> due = repo.findOverdueRecurring(now);
         for (Todo t : due) {
             LocalDateTime next = t.getDueAt();
+            int skipped = 0;
             while (!next.isAfter(now)) {
-                next = t.getRecurrenceRule().nextOccurrenceAfter(next);
+                next = t.getRecurrenceRule().nextOccurrenceAfter(next, t.getRecurrenceDays());
+                skipped++;
             }
             t.setDueAt(next);
             t.setCompleted(false);
+            t.setMissedCount(t.getMissedCount() + skipped);
         }
         repo.saveAll(due);
     }
